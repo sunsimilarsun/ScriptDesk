@@ -338,12 +338,13 @@ const PLATFORMS = {
   },
 
   // WorkBuddy（腾讯 AI 编程助手）：余额 = 积分（Credits）。
-  // 接口 POST /billing/meter/get-user-resource-summary，鉴权 Bearer accessToken + X-Account-Uid。
-  // accessToken 在桌面端本地是加密存储，无法直接读文件；走 webRequest 自动捕获（网页登录后自动抓）。
+  // 接口 POST /billing/meter/get-user-resource-summary。
+  // 网页端鉴权是 Cookie 会话（非 Bearer token），Cookie 与浏览器 UA 强绑定；
+  // 桌面端才用 Bearer accessToken（加密存本地，扩展读不到）。详见 fetchWorkbuddyResource。
   workbuddy: {
     name: 'WorkBuddy',
     consoleUrl: 'https://www.workbuddy.cn',
-    needsKey: false, // 走登录态 accessToken，非 API Key
+    needsKey: false, // 走 Cookie 会话（主）或 Bearer token（兜底），非 API Key
     async fetch(config, ctx) {
       const d = await fetchWorkbuddyResource(config, ctx);
       const totalCredits = d.TotalCredits ?? d.totalCredits ?? d.total_credits;
@@ -374,11 +375,42 @@ const PLATFORMS = {
   }
 };
 
-// WorkBuddy 取数三级降级：
-// 1) 手动填的 workbuddyToken + workbuddyUid
-// 2) storage 里 webRequest 自动捕获的 workbuddyAuth（Bearer accessToken，需打开「套餐与积分」页触发）
-// 3) Cookie 兜底：chrome.cookies 读 workbuddy 域 HttpOnly 会话 Cookie，带 Cookie + x-client-platform: web 调接口
+// WorkBuddy 取数（网页端鉴权机制，已核实）：
+// 网页 www.workbuddy.cn 登录后，「套餐与积分」页调 get-user-resource-summary 走的是
+// Cookie 会话 + x-client-platform: web 鉴权（不是 Bearer token，Bearer 是桌面端专属，
+// 桌面端 token 加密存 ~/.workbuddy/ 扩展读不到）。且 Cookie 会话与浏览器 User-Agent 强绑定：
+// UA 版本不一致（哪怕旧一个大版本）服务端直接回 HTTP 401。
+// 因此取数顺序改为：
+//  1) Cookie 会话（chrome.cookies 读 HttpOnly Cookie + 浏览器真实 UA）—— 主路径
+//  2) 手动/捕获的 Bearer accessToken + uid —— 兜底（桌面端 token 场景）
 async function fetchWorkbuddyResource(config, ctx) {
+  const url = 'https://www.workbuddy.cn/billing/meter/get-user-resource-summary';
+  // 浏览器真实 UA（含准确 Chrome 大版本），避免硬编码导致 401；取不到时退回当前 UA 字符串
+  const ua = (typeof navigator !== 'undefined' && navigator.userAgent)
+    || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36';
+
+  // 路径 1：Cookie 会话（网页端真实鉴权方式）
+  const cookie = await readWorkbuddyCookie();
+  if (cookie) {
+    try {
+      const json = await req(ctx, url, {
+        'Cookie': cookie,
+        'x-client-platform': 'web',
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Referer': 'https://www.workbuddy.cn/',
+        'Origin': 'https://www.workbuddy.cn',
+        'User-Agent': ua
+      }, 'POST', '{}');
+      return json?.data || json;
+    } catch (err) {
+      console.warn('[workbuddy] Cookie 会话失败，尝试 Bearer token：', err.message);
+      // 若 Cookie 因 UA 版本不匹配被 401，可尝试一次「去掉硬编码 UA、交给 DNR 用浏览器默认」——
+      // 但 DNR 注入的是同一个 UA，这里先保留浏览器真实 UA，继续走 Bearer 兜底。
+    }
+  }
+
+  // 路径 2：Bearer token 兜底（桌面端 accessToken；X-Account-Uid 与 X-User-Id 双写兼容）
   let token = (config.workbuddyToken || '').trim();
   let uid = (config.workbuddyUid || '').trim();
   if (!token || !uid) {
@@ -388,39 +420,18 @@ async function fetchWorkbuddyResource(config, ctx) {
       uid = uid || got.workbuddyAuth?.uid || '';
     } catch (_) { /* 忽略 */ }
   }
-
-  const url = 'https://www.workbuddy.cn/billing/meter/get-user-resource-summary';
-  // 路径 1/2：Bearer token 鉴权
   if (token && uid) {
-    try {
-      const json = await req(ctx, url, {
-        'Authorization': `Bearer ${token}`,
-        'X-Account-Uid': uid,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      }, 'POST', '{}');
-      return json?.data || json;
-    } catch (err) {
-      // token 过期/失效时继续尝试 Cookie 兜底，而不是直接抛错
-      console.warn('[workbuddy] Bearer 鉴权失败，尝试 Cookie 兜底：', err.message);
-    }
+    const json = await req(ctx, url, {
+      'Authorization': `Bearer ${token}`,
+      'X-Account-Uid': uid,
+      'X-User-Id': uid,
+      'Content-Type': 'application/json',
+      'Accept': 'application/json'
+    }, 'POST', '{}');
+    return json?.data || json;
   }
 
-  // 路径 3：Cookie 兜底（chrome.cookies 可读 HttpOnly，服务端认浏览器会话）
-  const cookie = await readWorkbuddyCookie();
-  if (!cookie) {
-    throw new Error('未获取 WorkBuddy 登录态：请在浏览器登录 workbuddy.cn（并打开「套餐与积分」页），或手动粘贴 accessToken 与 UID');
-  }
-  const json2 = await req(ctx, url, {
-    'Cookie': cookie,
-    'x-client-platform': 'web',
-    'Content-Type': 'application/json',
-    'Accept': 'application/json',
-    'Referer': 'https://www.workbuddy.cn/',
-    'Origin': 'https://www.workbuddy.cn',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
-  }, 'POST', '{}');
-  return json2?.data || json2;
+  throw new Error('未获取 WorkBuddy 登录态：请在浏览器登录 workbuddy.cn 并打开「套餐与积分」页一次（会自动读 Cookie），或手动粘贴有效 accessToken 与 UID');
 }
 
 // 读 workbuddy 域全部 Cookie（含 HttpOnly），拼成标准 Cookie 串
@@ -560,8 +571,8 @@ export default {
     { key: 'accessToken', label: '访问令牌（MoeRouter 用，nap_ 开头）', type: 'password', platforms: ['moerouter'], carrier: 'moerouter', testable: true, placeholder: 'nap_...（登录后自动捕获，或手动粘贴）' },
     { key: 'quotaPerUnit', label: '额度换算单位（quota 每单位对应美元）', type: 'number', platforms: ['moerouter'], default: 500000 },
     { key: 'exchangeRate', label: '美元兑人民币汇率', type: 'number', platforms: ['moerouter'], default: 7.3 },
-    { key: 'workbuddyUid', label: '账户 UID（WorkBuddy 用）', type: 'text', platforms: ['workbuddy'], placeholder: '32ee4e68-...（登录后自动捕获）' },
-    { key: 'workbuddyToken', label: '访问令牌（WorkBuddy 用）', type: 'password', platforms: ['workbuddy'], carrier: 'workbuddy', testable: true, placeholder: '登录 workbuddy.cn 后自动捕获，或手动粘贴' },
+    { key: 'workbuddyUid', label: '账户 UID（可选兜底，Cookie 失效时用）', type: 'text', platforms: ['workbuddy'], placeholder: '32ee4e68-...（留空即可，走 Cookie 会话）' },
+    { key: 'workbuddyToken', label: '访问令牌（可选兜底，桌面端 token）', type: 'password', platforms: ['workbuddy'], carrier: 'workbuddy', testable: true, placeholder: '留空即可，登录 workbuddy.cn 后自动读 Cookie' },
     { key: 'sfMode', label: '硅基流动取数方式', type: 'select', default: 'web', platforms: ['siliconflow'], options: [
       { value: 'web', label: '国内站 · 控制台登录态（默认，API 已下线）' },
       { value: 'api', label: '国际站 · API Key（api.siliconflow.com）' }

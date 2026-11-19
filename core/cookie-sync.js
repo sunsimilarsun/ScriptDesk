@@ -61,17 +61,18 @@ export const CARRIERS = {
     ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     referer: 'https://moerouter.com/'
   },
-  // WorkBuddy（腾讯 AI 编程助手）：积分余额接口 billing/meter/get-user-resource-summary，
-  // 登录态靠 workbuddy.cn 域，accessToken 由 webRequest 自动捕获
+  // WorkBuddy（腾讯 AI 编程助手）：积分余额接口 billing/meter/get-user-resource-summary。
+  // 网页端鉴权是 Cookie 会话（非 Bearer token），登录态靠 workbuddy.cn 域 Cookie；
+  // 且 Cookie 会话与浏览器 User-Agent 强绑定，UA 版本不符会被 401。
   workbuddy: {
     name: 'WorkBuddy',
-    domains: ['workbuddy.cn'],
+    domains: ['workbuddy.cn', '.workbuddy.cn', 'www.workbuddy.cn'],
     urls: [
-      'https://www.workbuddy.cn/',
-      'https://workbuddy.cn/'
+      'https://www.workbuddy.cn/profile/plans-usage',
+      'https://www.workbuddy.cn/'
     ],
-    loginUrl: 'https://www.workbuddy.cn/',
-    ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    loginUrl: 'https://www.workbuddy.cn/profile/plans-usage',
+    ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36',
     referer: 'https://www.workbuddy.cn/'
   }
 };

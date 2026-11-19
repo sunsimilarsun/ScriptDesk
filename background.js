@@ -193,9 +193,10 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
 );
 
 // ---------- WorkBuddy token 自动捕获 ----------
-// WorkBuddy 网页（workbuddy.cn）登录后会调 billing/meter/get-user-resource-summary 等接口，
-// 请求头带 Authorization: Bearer <accessToken> + X-Account-Uid。拦截并写入 storage，
-// 使「AI 余额 · WorkBuddy」卡无需手动粘贴。同样去重 + 精准刷新。
+// 说明：网页 www.workbuddy.cn 登录后，billing 接口走 Cookie 会话（非 Bearer token），
+// 余额读取主路径是 chrome.cookies 读 Cookie（见 widgets/ai-balance.js）。
+// 这里仍保留 Bearer token 拦截：覆盖桌面端 / 未来网页改走 Bearer 的场景，
+// 捕获到 Authorization: Bearer + X-Account-Uid（或 X-User-Id）时写入 storage 作为兜底。
 let _lastWorkbuddyToken = null;
 
 function extractWorkbuddyAuth(details) {
@@ -207,7 +208,7 @@ function extractWorkbuddyAuth(details) {
     const token = authHeader.slice(7).trim();
     if (!token) return;
     const uid = details.requestHeaders?.find(
-      (h) => h.name.toLowerCase() === 'x-account-uid'
+      (h) => h.name.toLowerCase() === 'x-account-uid' || h.name.toLowerCase() === 'x-user-id'
     )?.value || '';
     if (!uid) return;
     if (token === _lastWorkbuddyToken) return;
