@@ -99,14 +99,22 @@ async function fetchCodex(config, ctx) {
     throw new Error('接口未返回 rate_limit 用量数据（可能账号无套餐限额）');
   }
 
-  // 会员等级与到期：并行取 /backend-api/me（entitlement 含 expires_at / subscription_plan）
-  const plan = await fetchPlan(headers, auth, ctx);
+  // 会员等级与到期：并行取 /backend-api/me（entitlement 含 expires_at / subscription_plan），
+  // 同时把 wham/usage 的顶层 plan_type 一并传入作为最权威的等级来源
+  const plan = await fetchPlan(headers, auth, ctx, json);
 
   return { json, windows, plan };
 }
 
-// 会员等级 + 到期：优先 /backend-api/me 的 entitlement，兜底从 JWT 解析 chatgpt_plan_type
-async function fetchPlan(headers, auth, ctx) {
+// 会员等级 + 到期：多源取权威值。
+// 优先级：wham/usage 顶层 plan_type（当前活跃账号，最权威）
+//   → /backend-api/me 顶层 plan_type + orgs 工作区回退
+//   → entitlement.subscription_plan / has_active_subscription / expires_at
+//   → JWT 的 chatgpt_plan_type（最后兜底，token 若为升级前签发会偏旧）
+async function fetchPlan(headers, auth, ctx, usageJson) {
+  // 0) wham/usage 顶层 plan_type（当前账号最权威等级）
+  const usagePlan = normalizePlan(usageJson?.plan_type || usageJson?.account_plan_type || '');
+
   // 1) JWT 兜底等级（零额外请求）
   let jwtPlan = '';
   try {
@@ -115,23 +123,39 @@ async function fetchPlan(headers, auth, ctx) {
     jwtPlan = (payload['https://api.openai.com/auth']?.chatgpt_plan_type) || '';
   } catch (_) { /* 忽略 */ }
 
-  // 2) /backend-api/me 拿权威 entitlement
-  let mePlan = '', expiresAt = null, willRenew = null;
+  // 2) /backend-api/me 拿权威 entitlement + 工作区回退
+  let mePlan = '', orgPlan = '', expiresAt = null, willRenew = null;
   try {
     const me = await reqJson(ctx, 'https://chatgpt.com/backend-api/me', headers);
+    // 顶层 plan_type（正确路径，勿用 me.account.plan_type）
+    mePlan = normalizePlan(me?.plan_type || me?.account?.plan_type || '');
     const ent = me?.entitlement || {};
-    const planType = me?.account?.plan_type || ent?.subscription_plan || '';
-    mePlan = normalizePlan(planType);
+    // entitlement 里权威订阅字段（accounts/check 同源）
+    if (!mePlan || mePlan === 'Free') {
+      mePlan = normalizePlan(ent?.subscription_plan || ent?.plan_type || mePlan);
+    }
     // expires_at 可能是秒级（<1e12）或毫秒级时间戳
     if (ent?.expires_at) {
       let t = num(ent.expires_at);
       if (t > 0) { if (t < 1e12) t *= 1000; expiresAt = t; }
     }
     willRenew = ent?.has_active_subscription != null ? !!ent.has_active_subscription : null;
-  } catch (_) { /* me 接口失败则仅用 JWT 等级 */ }
+    // 工作区回退：Team/Enterprise 成员的个人 plan_type 可能是 free，
+    // 但 orgs[].settings.workspace_plan_type 反映真实团队套餐
+    const orgs = me?.orgs?.data || me?.organizations || [];
+    for (const o of orgs) {
+      const wp = o?.settings?.workspace_plan_type || o?.workspace_plan_type || '';
+      if (wp) {
+        const np = normalizePlan(wp);
+        if (np && np !== 'Free' && (!orgPlan || orgPlan === 'Free')) orgPlan = np;
+      }
+    }
+  } catch (_) { /* me 接口失败则用 usage/JWT 等级 */ }
 
-  const plan = normalizePlan(mePlan || jwtPlan);
-  return { plan, planRaw: mePlan || jwtPlan, expiresAt, willRenew };
+  // 汇聚：usage 最权威 → me 顶层 → 工作区 → entitlement → JWT
+  const plan = usagePlan || mePlan || orgPlan || normalizePlan(jwtPlan) || 'Free';
+  const planRaw = usagePlan || mePlan || orgPlan || jwtPlan;
+  return { plan, planRaw, expiresAt, willRenew };
 }
 
 // 归一化会员等级名（free/plus/pro/team/enterprise → 中文展示）

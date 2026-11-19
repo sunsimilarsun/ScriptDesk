@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ScriptDesk 小组件起始页",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx9X7kYL1F+lXHy4EJQgzGL6EsETKVeL1bK4jGlOHT+xa4p41lbFZJ3RhV1Jk/YQqG+4k6TGWML99xQeWZrSMDv4ydx61KCblhtBgtO65T6xJ/jxP8OBHKAWG0iTGlt37yL72IlVptE5iJh0FOY9xbnf3Wc+B6zJ9nL9NldkaGen/RduhjgirhQqOngQcOeHX+idJbEfwhVhFrp4caE9EiZeonvEdMI14ihvE6TOsB4Z4ZCfX4c4zkFyIdWFyTa3xIPu4/0dyjx8nAsZYWXvelTuDFQwLGWJ6f4o/ger7oPWl1iBi3/vgc2Vk0MNd+33W6JcTLUtAcCqQ30mztu367QIDAQAB",
-  "version": "2.8.7",
+  "version": "2.8.8",
   "description": "浏览器端 Scriptable 风格小组件起始页：话费三环 + Codex/WorkBuddy 额度 + MoeRouter 中转余额 + IP 纯净度 + 汇率折线图 + RSS/GitHub/行情/网络",
   "permissions": ["storage", "alarms", "declarativeNetRequest", "cookies", "webRequest"],
   "host_permissions": ["<all_urls>"],
