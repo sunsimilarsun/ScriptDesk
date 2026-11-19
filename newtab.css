@@ -378,6 +378,9 @@ body[data-mode="view"] .ns-ip[data-ip]:not([data-ip=""]):hover { color: var(--ac
 .sb-win-pct { font-size: 13px; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
 .sb-win-pct.low { color: var(--warn); }
 .sb-win-pct.mid { color: #f59e0b; }
+.sb-win-sub { font-size: 11px; font-weight: 600; color: var(--text-sub); font-variant-numeric: tabular-nums; margin-left: 4px; }
+.sb-win-sub.low { color: var(--warn); }
+.sb-win-sub.mid { color: #f59e0b; }
 .sb-win .w-progress { margin: 4px 0 0; }
 .sb-win .w-progress i.warn { background: var(--warn); }
 .sb-win .w-progress i.mid { background: #f59e0b; }

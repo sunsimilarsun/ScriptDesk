@@ -27,42 +27,67 @@ async function getLive(accountIndex) {
 }
 
 // ---------- 查找已打开的 gemini 标签页并触发同步 ----------
-async function requestSync(accountIndex, timeoutMs = 8000) {
+// 向标签页的 MAIN world 注入取数函数并执行（绕开 content script 的 CSP 限制），
+// 把结果写回 storage。返回 { ok, resp, error }。
+async function collectFromTab(tabId, accountIndex) {
+  try {
+    // 注入 MAIN world 取数函数（每次覆盖，不拦截重复注入，保证重载后旧页也跑新版）
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      files: ['content/gemini-usage-main.js']
+    });
+    // 再执行取数，直接拿返回值
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: (idx) => window.__scriptDeskCollectUsage ? window.__scriptDeskCollectUsage(idx) : { ok: false, error: 'MAIN 取数函数未挂载' },
+      args: [accountIndex]
+    });
+    const resp = results && results[0] && results[0].result;
+    if (resp) {
+      // 写 storage（成功或失败都写，供卡片读取真实结果）
+      const live = { ...resp, updatedAt: resp.updatedAt || Date.now() };
+      try { await chrome.storage.local.set({ [`${STORAGE_PREFIX}${resp.accountIndex ?? accountIndex}`]: live }); } catch (_) {}
+      return { ok: true, resp, error: '' };
+    }
+    return { ok: false, resp: null, error: '注入执行无返回' };
+  } catch (e) {
+    return { ok: false, resp: null, error: e.message };
+  }
+}
+
+async function requestSync(accountIndex) {
   let tabs = [];
   try {
     tabs = await chrome.tabs.query({ url: 'https://gemini.google.com/*' });
   } catch (_) { tabs = []; }
 
-  // 优先匹配目标账号索引 /u/{idx} 的标签页；否则退而求其次用任意 gemini 标签页
-  const target = tabs.find((t) => {
+  // 排序：目标账号索引优先；其次非休眠（discarded）优先、活跃优先
+  const score = (t) => {
     const m = (t.url || '').match(/gemini\.google\.com\/u\/(\d+)/);
     const idx = m ? parseInt(m[1], 10) : 0;
-    return idx === accountIndex;
-  }) || tabs[0];
+    let s = 0;
+    if (idx === accountIndex) s += 1000;
+    if (!t.discarded) s += 100;
+    if (t.active) s += 10;
+    return s;
+  };
+  const ordered = tabs.slice().sort((a, b) => score(b) - score(a));
 
-  if (target && target.id != null) {
-    try {
-      const resp = await new Promise((resolve) => {
-        let done = false;
-        const timer = setTimeout(() => { if (!done) { done = true; resolve({ __timeout: true }); } }, timeoutMs);
-        chrome.tabs.sendMessage(target.id, { action: 'geminiUsageRefresh', accountIndex }, (r) => {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          // 吞掉「Receiving end does not exist」——目标页未注入 content script 时属正常，走缓存降级
-          void chrome.runtime.lastError;
-          resolve(r || {});
-        });
-      });
-      if (!resp.__timeout && resp && resp.ok) {
-        const live = await getLive(resp.accountIndex ?? accountIndex);
-        return { live, fromTab: true, throttled: !!resp.throttled };
-      }
-      if (!resp.__timeout && resp && resp.ok === false && resp.error) {
-        const live = await getLive(accountIndex);
-        return { live, fromTab: false, error: resp.error };
-      }
-    } catch (_) { /* 通信失败落回缓存 */ }
+  for (const t of ordered) {
+    if (t.id == null) continue;
+    if (t.discarded) continue; // 跳过休眠页
+    const { resp, error } = await collectFromTab(t.id, accountIndex);
+
+    if (resp && resp.ok) {
+      return { live: resp, fromTab: true, throttled: !!resp.throttled };
+    }
+    if (resp && resp.ok === false && resp.error) {
+      // 取数失败：透传真实错误
+      return { live: resp, fromTab: false, error: resp.error };
+    }
+    // 其余（注入失败）记录错误，尝试下一个标签页
   }
 
   const live = await getLive(accountIndex);
@@ -73,7 +98,11 @@ async function requestSync(accountIndex, timeoutMs = 8000) {
 async function fetchGemini(config) {
   const accountIndex = parseInt(config.accountIndex || '0', 10) || 0;
 
-  const { live } = await requestSync(accountIndex);
+  // 防御：历史 layout 可能残留过时的 rpcid/args/cookie 配置项。
+  // 取数逻辑（content/gemini-usage-main.js）硬编码使用实测确认的 jSf9Qc，
+  // 本组件只读取 accountIndex，天然忽略 config.rpcid/args/cookie，不受旧字段干扰。
+
+  const { live, error } = await requestSync(accountIndex);
 
   if (live && live.ok && (live.windows || []).length) {
     return {
@@ -89,6 +118,28 @@ async function fetchGemini(config) {
       warn: '',
       fetchedAt: live.updatedAt || Date.now(),
       live: true
+    };
+  }
+
+  // content script 实际取数但失败：透传真实错误阶段，而不是误报「尚未同步」
+  if (error || (live && live.ok === false && live.error)) {
+    const errMsg = error || (live && live.error) || '未知错误';
+    return {
+      name: 'Gemini',
+      plan: 'Gemini',
+      planInfo: { plan: 'Gemini', accountEmail: live?.email || '', accountIndex, source: 'error' },
+      windows: [{
+        id: 'error',
+        label: '同步失败',
+        type: 'percent',
+        usedPercent: null,
+        usedText: errMsg,
+        resetText: ''
+      }],
+      warn: '',
+      fetchedAt: live?.updatedAt || null,
+      live: false,
+      error: errMsg
     };
   }
 
@@ -143,10 +194,20 @@ function fmtCountdown(ms) {
   const diff = ms - Date.now();
   if (diff <= 0) return '即将重置';
   const total = Math.floor(diff / 1000);
-  const h = Math.floor(total / 3600);
+  const d = Math.floor(total / 86400);
+  const h = Math.floor((total % 86400) / 3600);
   const m = Math.floor((total % 3600) / 60);
+  if (d > 0) return `${d} 天 ${h} 小时后重置`;
   if (h > 0) return `${h} 小时 ${m} 分后重置`;
   return `${m} 分钟后重置`;
+}
+
+// 精确重置时间（tooltip 用）
+function fmtExact(ms) {
+  if (ms == null || !Number.isFinite(ms)) return '';
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 function timeAgo(ts) {
@@ -167,18 +228,38 @@ function renderWindows(data, inst) {
   const emailTitle = email ? `title="${esc(email)}"` : '';
 
   const rows = (data.windows || []).map((w) => {
-    const pct = w.usedPercent;
-    const hasPct = pct !== null && pct !== undefined;
-    const high = hasPct && pct >= 95;
-    const mid = hasPct && pct >= 80 && pct < 95;
+    // 「剩余」视角：进度条显示剩余比例，剩余越少越告警
+    const remaining = w.remaining;
+    const totalLimit = w.totalLimit;
+    const hasQuota = typeof remaining === 'number' && typeof totalLimit === 'number' && totalLimit > 0;
+    const remainPct = hasQuota ? Math.min(100, Math.max(0, (remaining / totalLimit) * 100)) : null;
+    const hasPct = remainPct !== null && remainPct !== undefined;
+    // 告警反转：剩余 ≤5% 红色、≤20% 琥珀色
+    const high = hasPct && remainPct <= 5;
+    const mid = hasPct && remainPct <= 20 && remainPct > 5;
     const cls = high ? 'low' : mid ? 'mid' : '';
     const bar = hasPct
-      ? `<div class="w-progress"><i class="${cls}" style="width:${Math.max(0, Math.min(100, pct))}%"></i></div>`
+      ? `<div class="w-progress"><i class="${cls}" style="width:${Math.max(0, Math.min(100, remainPct))}%"></i></div>`
       : '';
+    // 剩余百分比文案：整数或 1 位小数
+    const remainPctText = hasPct
+      ? (Number.isInteger(remainPct) ? `${remainPct}%` : `${remainPct.toFixed(1)}%`)
+      : '';
+    const remainText = hasQuota
+      ? `剩余 ${remaining} / ${totalLimit}`
+      : (w.usedText || '');
     const cd = w.resetMs ? fmtCountdown(w.resetMs) : (w.resetText || '');
-    return `<div class="sb-win">
+    // tooltip：显示已用比例 + 精确重置时间
+    const tipParts = [];
+    if (hasQuota) tipParts.push(`已用 ${(100 - remainPct).toFixed(1)}%`);
+    if (w.resetMs) tipParts.push(`重置 ${fmtExact(w.resetMs)}`);
+    const tip = tipParts.length ? `title="${esc(tipParts.join(' · '))}"` : '';
+    return `<div class="sb-win" ${tip}>
       <div class="sb-win-row"><span class="sb-win-label">${esc(w.label)}</span><span class="sb-win-cd">${esc(cd)}</span></div>
-      <div class="sb-win-row"><span class="sb-win-pct ${cls}">${esc(w.usedText || '')}</span></div>
+      <div class="sb-win-row">
+        <span class="sb-win-pct ${cls}">${esc(remainText)}</span>
+        ${remainPctText ? `<span class="sb-win-sub ${cls}">${esc(remainPctText)}</span>` : ''}
+      </div>
       ${bar}
     </div>`;
   }).join('');
