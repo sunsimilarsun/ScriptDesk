@@ -391,6 +391,7 @@ async function fetchWorkbuddyResource(config, ctx) {
 
   // 路径 1：Cookie 会话（网页端真实鉴权方式）
   const cookie = await readWorkbuddyCookie();
+  let cookieErr = '';
   if (cookie) {
     try {
       const json = await req(ctx, url, {
@@ -398,16 +399,17 @@ async function fetchWorkbuddyResource(config, ctx) {
         'x-client-platform': 'web',
         'Content-Type': 'application/json',
         'Accept': 'application/json',
-        'Referer': 'https://www.workbuddy.cn/',
+        'Referer': 'https://www.workbuddy.cn/profile/plans-usage',
         'Origin': 'https://www.workbuddy.cn',
         'User-Agent': ua
       }, 'POST', '{}');
       return json?.data || json;
     } catch (err) {
+      cookieErr = err.message;
       console.warn('[workbuddy] Cookie 会话失败，尝试 Bearer token：', err.message);
-      // 若 Cookie 因 UA 版本不匹配被 401，可尝试一次「去掉硬编码 UA、交给 DNR 用浏览器默认」——
-      // 但 DNR 注入的是同一个 UA，这里先保留浏览器真实 UA，继续走 Bearer 兜底。
     }
+  } else {
+    cookieErr = '浏览器未读到 workbuddy.cn 登录 Cookie';
   }
 
   // 路径 2：Bearer token 兜底（桌面端 accessToken；X-Account-Uid 与 X-User-Id 双写兼容）
@@ -421,17 +423,32 @@ async function fetchWorkbuddyResource(config, ctx) {
     } catch (_) { /* 忽略 */ }
   }
   if (token && uid) {
-    const json = await req(ctx, url, {
-      'Authorization': `Bearer ${token}`,
-      'X-Account-Uid': uid,
-      'X-User-Id': uid,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json'
-    }, 'POST', '{}');
-    return json?.data || json;
+    try {
+      const json = await req(ctx, url, {
+        'Authorization': `Bearer ${token}`,
+        'X-Account-Uid': uid,
+        'X-User-Id': uid,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      }, 'POST', '{}');
+      return json?.data || json;
+    } catch (err) {
+      // token 也失效：清掉，下次不再用坏 token
+      if (String(err.message).includes('401') || String(err.message).includes('invalid_token')) {
+        try { await chrome.storage.local.remove('workbuddyAuth'); } catch (_) {}
+      }
+      throw new Error(
+        `Cookie 与 Bearer 两种鉴权都失败。Cookie：${cookieErr || '未读取'}；Bearer：${err.message}。` +
+        '请在 Chrome 浏览器打开 https://www.workbuddy.cn/profile/plans-usage 登录一次，然后回来点「测试连接」'
+      );
+    }
   }
 
-  throw new Error('未获取 WorkBuddy 登录态：请在浏览器登录 workbuddy.cn 并打开「套餐与积分」页一次（会自动读 Cookie），或手动粘贴有效 accessToken 与 UID');
+  throw new Error(
+    `未获取 WorkBuddy 登录态（${cookieErr || '无 Cookie'}）。` +
+    '请在 Chrome 浏览器打开 https://www.workbuddy.cn/profile/plans-usage 登录一次，' +
+    '登录后浏览器会自动保存会话 Cookie，扩展即可读取积分。'
+  );
 }
 
 // 读 workbuddy 域全部 Cookie（含 HttpOnly），拼成标准 Cookie 串
