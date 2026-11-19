@@ -34,6 +34,62 @@ function fmtCountdown(ms) {
   return `${m} 分钟`;
 }
 
+// 到期时间解析：兼容 ISO 时间字符串 / 秒级时间戳 / 毫秒级时间戳；非法值返回 null
+function parseExpiryMs(value) {
+  if (value === undefined || value === null || value === '') return null;
+  // 数字或数字字符串：按量级判断秒/毫秒
+  const n = num(value);
+  if (n > 0) {
+    if (n < 1e12) return n * 1000;   // 秒级
+    return n;                        // 毫秒级
+  }
+  // 字符串：ISO / 日期时间
+  const t = new Date(String(value)).getTime();
+  return Number.isFinite(t) && t > 0 ? t : null;
+}
+
+// 到期/续费文案格式化：返回 { text, tooltip, isExpiringSoon }
+function formatPlanExpiry(expiresAt, willRenew) {
+  const now = Date.now();
+  const exp = parseExpiryMs(expiresAt);
+  if (!exp) return null;
+
+  const diffMs = exp - now;
+  const expired = diffMs <= 0;
+  const d = new Date(exp);
+  const nowY = new Date(now).getFullYear();
+  const sameYear = d.getFullYear() === nowY;
+
+  // 日期短格式：跨年补全年份
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const dateShort = sameYear ? `${mm}/${dd}` : `${d.getFullYear()}/${mm}/${dd}`;
+
+  // 精确 tooltip（本地时区）
+  const tooltip = `${d.getFullYear()}-${mm}-${dd} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+
+  if (expired) {
+    return { text: '已到期', tooltip, isExpiringSoon: true };
+  }
+
+  // 剩余时间：不足 24 小时按小时向上取整，24 小时及以上按天向上取整
+  const remainHours = diffMs / 3600000;
+  const remainDays = diffMs / 86400000;
+  let remain;
+  if (remainHours < 24) remain = `${Math.ceil(remainHours)} 小时`;
+  else remain = `${Math.ceil(remainDays)} 天`;
+
+  let text;
+  if (willRenew === true) text = `${remain}后续费（${dateShort}）`;
+  else if (willRenew === false) text = `${remain}后到期（${dateShort}）`;
+  else text = `剩余 ${remain}（${dateShort}）`;
+
+  // 即将到期：不续费且剩余 <= 3 天
+  const isExpiringSoon = willRenew !== true && remainDays <= 3;
+
+  return { text, tooltip, isExpiringSoon };
+}
+
 // ---------- 取数 ----------
 async function reqJson(ctx, url, headers) {
   let res;
@@ -124,9 +180,9 @@ async function fetchPlan(headers, auth, ctx, usageJson) {
   } catch (_) { /* 忽略 */ }
 
   // 2) /backend-api/me 拿权威 entitlement + 工作区回退
-  let mePlan = '', orgPlan = '', expiresAt = null, willRenew = null;
+  let mePlan = '', orgPlan = '', me = null;
   try {
-    const me = await reqJson(ctx, 'https://chatgpt.com/backend-api/me', headers);
+    me = await reqJson(ctx, 'https://chatgpt.com/backend-api/me', headers);
     // 顶层 plan_type（正确路径，勿用 me.account.plan_type）
     mePlan = normalizePlan(me?.plan_type || me?.account?.plan_type || '');
     const ent = me?.entitlement || {};
@@ -134,12 +190,6 @@ async function fetchPlan(headers, auth, ctx, usageJson) {
     if (!mePlan || mePlan === 'Free') {
       mePlan = normalizePlan(ent?.subscription_plan || ent?.plan_type || mePlan);
     }
-    // expires_at 可能是秒级（<1e12）或毫秒级时间戳
-    if (ent?.expires_at) {
-      let t = num(ent.expires_at);
-      if (t > 0) { if (t < 1e12) t *= 1000; expiresAt = t; }
-    }
-    willRenew = ent?.has_active_subscription != null ? !!ent.has_active_subscription : null;
     // 工作区回退：Team/Enterprise 成员的个人 plan_type 可能是 free，
     // 但 orgs[].settings.workspace_plan_type 反映真实团队套餐
     const orgs = me?.orgs?.data || me?.organizations || [];
@@ -152,10 +202,76 @@ async function fetchPlan(headers, auth, ctx, usageJson) {
     }
   } catch (_) { /* me 接口失败则用 usage/JWT 等级 */ }
 
+  // 3) 到期时间：三级降级权威取数（subscriptions → accounts/check → /me）
+  const { expiresAt, willRenew, expirySource } = await fetchSubscriptionExpiry(headers, auth, me, ctx);
+
   // 汇聚：usage 最权威 → me 顶层 → 工作区 → entitlement → JWT
   const plan = usagePlan || mePlan || orgPlan || normalizePlan(jwtPlan) || 'Free';
   const planRaw = usagePlan || mePlan || orgPlan || jwtPlan;
-  return { plan, planRaw, expiresAt, willRenew };
+  return { plan, planRaw, expiresAt, willRenew, expirySource };
+}
+
+// 到期时间权威取数：三级降级，任一接口异常均静默降级，不影响套餐等级与额度窗口展示。
+// 返回 { expiresAt, willRenew, expirySource }，expiresAt 统一为毫秒时间戳或 null。
+async function fetchSubscriptionExpiry(headers, auth, me, ctx) {
+  let expiresAt = null, willRenew = null, expirySource = '';
+
+  // 1) GET /backend-api/subscriptions（带 account_id 时拼 query）
+  try {
+    let subUrl = 'https://chatgpt.com/backend-api/subscriptions';
+    if (auth.account_id) subUrl += `?account_id=${encodeURIComponent(auth.account_id)}`;
+    const sub = await reqJson(ctx, subUrl, headers);
+    const raw = sub?.active_until || sub?.renews_at || sub?.expires_at || null;
+    const wr = sub?.will_renew;
+    const ms = parseExpiryMs(raw);
+    if (ms) {
+      expiresAt = ms;
+      expirySource = 'subscriptions';
+      if (typeof wr === 'boolean') willRenew = wr;
+    }
+  } catch (_) { /* 静默降级 */ }
+
+  // 2) GET /backend-api/accounts/check/v4-2023-04-27
+  if (!expiresAt) {
+    try {
+      const chk = await reqJson(ctx, 'https://chatgpt.com/backend-api/accounts/check/v4-2023-04-27', headers);
+      const accounts = chk?.accounts || {};
+      // 优先 account_id 匹配 → has_active_subscription 节点 → default
+      let node = auth.account_id ? accounts[auth.account_id] : null;
+      if (!node) {
+        const active = Object.values(accounts).find(
+          (a) => a?.entitlement?.has_active_subscription === true
+        );
+        node = active || accounts.default || accounts['default'];
+      }
+      const ent = node?.entitlement || {};
+      const raw = ent?.renews_at || ent?.expires_at || null;
+      const ms = parseExpiryMs(raw);
+      if (ms) {
+        expiresAt = ms;
+        expirySource = 'accounts/check';
+        const las = node?.last_active_subscription;
+        const wr = las?.will_renew ?? ent?.will_renew;
+        if (typeof wr === 'boolean') willRenew = wr;
+      }
+    } catch (_) { /* 静默降级 */ }
+  }
+
+  // 3) 兜底：/backend-api/me 的 entitlement
+  if (!expiresAt) {
+    try {
+      const ent = me?.entitlement || {};
+      const raw = ent?.renews_at || ent?.expires_at || null;
+      const ms = parseExpiryMs(raw);
+      if (ms) {
+        expiresAt = ms;
+        expirySource = 'me';
+        if (typeof ent?.will_renew === 'boolean') willRenew = ent.will_renew;
+      }
+    } catch (_) { /* 静默降级 */ }
+  }
+
+  return { expiresAt, willRenew, expirySource };
 }
 
 // 归一化会员等级名（free/plus/pro/team/enterprise → 中文展示）
@@ -191,14 +307,15 @@ function renderWindows(data, inst) {
   const planInfo = data.planInfo || {};
   const planName = planInfo.plan || (typeof data.plan === 'string' ? data.plan : '') || 'Codex';
   const planBadge = `<span class="w-badge sb-plan-badge">${esc(planName)}</span>`;
+
+  // 到期信息：仅在付费套餐（非 Free）且成功解析到到期时间时展示，避免 Free 账号出现空白分隔
   let expiryLine = '';
-  if (planInfo.expiresAt) {
-    const diffMs = planInfo.expiresAt - Date.now();
-    const expired = diffMs <= 0;
-    const dateStr = new Date(planInfo.expiresAt).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
-    expiryLine = `<div class="sb-expiry ${expired ? 'expired' : ''}">
-      ${expired ? '已于 ' + esc(dateStr) + ' 到期' : '到期 ' + esc(dateStr) + '（' + fmtCountdown(diffMs) + '）'}
-    </div>`;
+  if (planName !== 'Free' && planInfo.expiresAt) {
+    const fmt = formatPlanExpiry(planInfo.expiresAt, planInfo.willRenew);
+    if (fmt) {
+      const soonCls = fmt.isExpiringSoon ? ' expiring-soon' : '';
+      expiryLine = `<div class="sb-expiry${soonCls}" title="${esc(fmt.tooltip)}">${esc(fmt.text)}</div>`;
+    }
   }
 
   return `

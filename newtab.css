@@ -384,4 +384,5 @@ body[data-mode="view"] .ns-ip[data-ip]:not([data-ip=""]):hover { color: var(--ac
 .sb-plan-badge { background: rgba(139,92,246,.14); color: #a78bfa; }
 .sb-expiry { font-size: 11px; color: var(--text-sub); margin-top: 4px; font-variant-numeric: tabular-nums; }
 .sb-expiry.expired { color: var(--warn); }
+.sb-expiry.expiring-soon { color: var(--warn); font-weight: 600; }
 
