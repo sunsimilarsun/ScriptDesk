@@ -402,7 +402,13 @@ async function fetchWorkbuddyResource(config, ctx) {
   const url = 'https://www.workbuddy.cn/billing/meter/get-user-resource-summary';
 
   // 路径 1：Cookie 会话（网页端真实鉴权方式），reduced UA 双候选重试
-  const { cookieStr, names } = await readWorkbuddyCookie();
+  // 优先用已保存的 Cookie（config.workbuddyCookie），为空则实时读浏览器 Cookie 兜底
+  const savedCookie = (config.workbuddyCookie || '').trim();
+  const live = await readWorkbuddyCookie();
+  const cookieStr = savedCookie || live.cookieStr;
+  const names = savedCookie
+    ? savedCookie.split(';').map((p) => p.split('=')[0].trim()).filter(Boolean)
+    : live.names;
   let cookieErr = '';
   if (cookieStr) {
     const uas = buildWorkbuddyUAs();
@@ -426,7 +432,7 @@ async function fetchWorkbuddyResource(config, ctx) {
       }
     }
   } else {
-    cookieErr = '浏览器未读到 workbuddy.cn 的登录 Cookie';
+    cookieErr = '未保存 Cookie，且浏览器也未读到 workbuddy.cn 的登录 Cookie';
   }
 
   // 路径 2：Bearer token 兜底（桌面端 accessToken；X-Account-Uid 与 X-User-Id 双写兼容）
@@ -635,8 +641,9 @@ export default {
     { key: 'accessToken', label: '访问令牌（MoeRouter 用，nap_ 开头）', type: 'password', platforms: ['moerouter'], carrier: 'moerouter', testable: true, placeholder: 'nap_...（登录后自动捕获，或手动粘贴）' },
     { key: 'quotaPerUnit', label: '额度换算单位（quota 每单位对应美元）', type: 'number', platforms: ['moerouter'], default: 500000 },
     { key: 'exchangeRate', label: '美元兑人民币汇率', type: 'number', platforms: ['moerouter'], default: 7.3 },
-    { key: 'workbuddyUid', label: '账户 UID（可选兜底，Cookie 失效时用）', type: 'text', platforms: ['workbuddy'], placeholder: '32ee4e68-...（留空即可，走 Cookie 会话）' },
-    { key: 'workbuddyToken', label: '访问令牌（可选兜底，桌面端 token）', type: 'password', platforms: ['workbuddy'], carrier: 'workbuddy', testable: true, placeholder: '留空即可，登录 workbuddy.cn 后自动读 Cookie' },
+    { key: 'workbuddyCookie', label: 'WorkBuddy 登录 Cookie（可保存，长期有效）', type: 'cookie', platforms: ['workbuddy'], carrier: 'workbuddy', placeholder: '点「同步浏览器 Cookie」一键保存，或粘贴抓包的 Cookie 串（KEYCLOAK_SESSION=...; session=...）' },
+    { key: 'workbuddyUid', label: '账户 UID（可选兜底，Cookie 失效时用）', type: 'text', platforms: ['workbuddy'], placeholder: '32ee4e68-...（留空即可）' },
+    { key: 'workbuddyToken', label: '访问令牌（可选兜底，桌面端 token）', type: 'password', platforms: ['workbuddy'], carrier: 'workbuddy', testable: true, placeholder: '留空即可，默认走已保存的 Cookie' },
     { key: 'sfMode', label: '硅基流动取数方式', type: 'select', default: 'web', platforms: ['siliconflow'], options: [
       { value: 'web', label: '国内站 · 控制台登录态（默认，API 已下线）' },
       { value: 'api', label: '国际站 · API Key（api.siliconflow.com）' }

@@ -66,7 +66,7 @@ export const CARRIERS = {
   // 且 Cookie 会话与浏览器 User-Agent 强绑定，UA 版本不符会被 401。
   workbuddy: {
     name: 'WorkBuddy',
-    domains: ['workbuddy.cn', '.workbuddy.cn', 'www.workbuddy.cn'],
+    domains: ['workbuddy.cn', 'www.workbuddy.cn', 'workbuddy.ai', 'www.workbuddy.ai'],
     urls: [
       'https://www.workbuddy.cn/profile/plans-usage',
       'https://www.workbuddy.cn/'
@@ -81,6 +81,18 @@ export const CARRIERS = {
 export async function syncBrowserCookie(operator) {
   const carrier = CARRIERS[operator];
   if (!carrier) throw new Error(`未知运营商：${operator}`);
+
+  // chrome://newtab 覆盖页里 chrome.cookies 可能读不到 Cookie（浏览器安全限制），
+  // 优先委托 background service worker 读取（那里 chrome.cookies 肯定可用）。
+  const domains = (carrier.domains || []).filter((d) => d !== '.workbuddy.cn'); // 去掉前导点写法
+  if (typeof window !== 'undefined' && chrome.runtime?.sendMessage && domains.length > 0) {
+    try {
+      const res = await chrome.runtime.sendMessage({ action: 'readCookies', domains });
+      if (res && res.cookieStr) return res.cookieStr;
+    } catch (e) {
+      console.warn('[cookie-sync] 委托 background 读 Cookie 异常：', e.message);
+    }
+  }
 
   const all = [];
   for (const domain of carrier.domains || []) {

@@ -650,7 +650,12 @@ $('drawer-body').addEventListener('click', async (e) => {
     || $('drawer-body').querySelector('[data-key="platform"]')?.value
     || 'unicom';
   const hint = $('drawer-body').querySelector('[data-cookie-hint]');
-  const cookieEl = $('drawer-body').querySelector('[data-key="cookie"]');
+  // 定位到按钮所属 cookie 字段的输入框（字段 key 可能是 cookie / workbuddyCookie 等），
+  // 而不是写死 [data-key="cookie"]，这样 WorkBuddy 等自定义字段也能正确回填。
+  const cookieField = btn.closest('.cfg-field');
+  const cookieEl = cookieField
+    ? cookieField.querySelector('[data-key]')
+    : $('drawer-body').querySelector('[data-key="cookie"]');
 
   if (btn.dataset.cookieAction === 'login') {
     const { getLoginUrl } = await import('./core/cookie-sync.js');
