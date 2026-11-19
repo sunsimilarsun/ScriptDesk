@@ -530,8 +530,12 @@ $('drawer-body').addEventListener('click', async (e) => {
         hint.textContent = `连接正常 · ${res.platformName} · ${res.currency}${res.primaryValue} ${res.primaryLabel}`;
         hint.className = 'api-test-hint ok';
       }
+      // 结果弹窗，确保用户一定看得到
+      alert(`连接正常\n${res.platformName} · ${res.currency}${res.primaryValue} ${res.primaryLabel}`);
     } catch (err) {
+      console.error('[测试连接] 失败：', err);
       if (hint) { hint.textContent = `连接失败：${err.message}`; hint.className = 'api-test-hint err'; }
+      alert(`连接失败：${err.message}`);
     } finally {
       testBtn.textContent = '测试连接';
     }

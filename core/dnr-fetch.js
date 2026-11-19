@@ -50,7 +50,14 @@ export async function netFetch(url, { method = 'GET', headers = {}, body } = {})
 
   try {
     // credentials:'omit' —— 不携带浏览器自身 Cookie，鉴权完全由传入头决定，行为可预期
-    return await fetch(url, { method, body, credentials: 'omit', headers: directHeaders });
+    // 15s 超时：避免接口挂起时「测试连接」一直转圈无反馈
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      return await fetch(url, { method, body, credentials: 'omit', headers: directHeaders, signal: ctrl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
   } finally {
     if (ruleAdded) {
       try {
