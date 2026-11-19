@@ -223,7 +223,13 @@ function extractWorkbuddyAuth(details) {
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
   extractWorkbuddyAuth,
-  { urls: ['*://www.workbuddy.cn/billing/*', '*://workbuddy.cn/billing/*', '*://copilot.tencent.com/v2/billing/*'] },
+  { urls: [
+    '*://www.workbuddy.cn/billing/*',
+    '*://workbuddy.cn/billing/*',
+    '*://www.workbuddy.ai/billing/*',
+    '*://workbuddy.ai/billing/*',
+    '*://copilot.tencent.com/v2/billing/*'
+  ] },
   ['requestHeaders']
 );
 

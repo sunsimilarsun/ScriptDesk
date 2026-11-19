@@ -345,26 +345,7 @@ const PLATFORMS = {
     consoleUrl: 'https://www.workbuddy.cn',
     needsKey: false, // 走登录态 accessToken，非 API Key
     async fetch(config, ctx) {
-      // 令牌两级降级：手动填的 workbuddyToken → storage 自动捕获的 workbuddyAuth
-      let token = (config.workbuddyToken || '').trim();
-      let uid = (config.workbuddyUid || '').trim();
-      if (!token || !uid) {
-        try {
-          const got = await chrome.storage.local.get(['workbuddyAuth']);
-          token = token || got.workbuddyAuth?.access_token || '';
-          uid = uid || got.workbuddyAuth?.uid || '';
-        } catch (_) { /* 忽略 */ }
-      }
-      if (!token || !uid) {
-        throw new Error('未获取 WorkBuddy 登录态：请打开 workbuddy.cn 登录一次（自动捕获令牌），或手动粘贴 accessToken 与 UID');
-      }
-      const json = await req(ctx, 'https://www.workbuddy.cn/billing/meter/get-user-resource-summary', {
-        'Authorization': `Bearer ${token}`,
-        'X-Account-Uid': uid,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      }, 'POST', '{}');
-      const d = json?.data || json;
+      const d = await fetchWorkbuddyResource(config, ctx);
       const totalCredits = d.TotalCredits ?? d.totalCredits ?? d.total_credits;
       if (totalCredits === undefined) {
         throw new Error('响应缺少 TotalCredits 字段，请确认登录态有效或接口结构');
@@ -392,6 +373,75 @@ const PLATFORMS = {
     }
   }
 };
+
+// WorkBuddy 取数三级降级：
+// 1) 手动填的 workbuddyToken + workbuddyUid
+// 2) storage 里 webRequest 自动捕获的 workbuddyAuth（Bearer accessToken，需打开「套餐与积分」页触发）
+// 3) Cookie 兜底：chrome.cookies 读 workbuddy 域 HttpOnly 会话 Cookie，带 Cookie + x-client-platform: web 调接口
+async function fetchWorkbuddyResource(config, ctx) {
+  let token = (config.workbuddyToken || '').trim();
+  let uid = (config.workbuddyUid || '').trim();
+  if (!token || !uid) {
+    try {
+      const got = await chrome.storage.local.get(['workbuddyAuth']);
+      token = token || got.workbuddyAuth?.access_token || '';
+      uid = uid || got.workbuddyAuth?.uid || '';
+    } catch (_) { /* 忽略 */ }
+  }
+
+  const url = 'https://www.workbuddy.cn/billing/meter/get-user-resource-summary';
+  // 路径 1/2：Bearer token 鉴权
+  if (token && uid) {
+    try {
+      const json = await req(ctx, url, {
+        'Authorization': `Bearer ${token}`,
+        'X-Account-Uid': uid,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      }, 'POST', '{}');
+      return json?.data || json;
+    } catch (err) {
+      // token 过期/失效时继续尝试 Cookie 兜底，而不是直接抛错
+      console.warn('[workbuddy] Bearer 鉴权失败，尝试 Cookie 兜底：', err.message);
+    }
+  }
+
+  // 路径 3：Cookie 兜底（chrome.cookies 可读 HttpOnly，服务端认浏览器会话）
+  const cookie = await readWorkbuddyCookie();
+  if (!cookie) {
+    throw new Error('未获取 WorkBuddy 登录态：请在浏览器登录 workbuddy.cn（并打开「套餐与积分」页），或手动粘贴 accessToken 与 UID');
+  }
+  const json2 = await req(ctx, url, {
+    'Cookie': cookie,
+    'x-client-platform': 'web',
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+    'Referer': 'https://www.workbuddy.cn/',
+    'Origin': 'https://www.workbuddy.cn',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
+  }, 'POST', '{}');
+  return json2?.data || json2;
+}
+
+// 读 workbuddy 域全部 Cookie（含 HttpOnly），拼成标准 Cookie 串
+async function readWorkbuddyCookie() {
+  try {
+    const domains = ['workbuddy.cn', '.workbuddy.cn', 'www.workbuddy.cn', 'workbuddy.ai', 'www.workbuddy.ai'];
+    const all = [];
+    for (const d of domains) {
+      const list = await chrome.cookies.getAll({ domain: d });
+      all.push(...list);
+    }
+    const seen = new Map();
+    for (const c of all) {
+      if (c.name && c.value !== undefined) seen.set(`${c.name}@${c.domain}${c.path}`, c);
+    }
+    const pairs = [...seen.values()].map((c) => `${c.name}=${c.value}`);
+    return pairs.length ? pairs.join('; ') : '';
+  } catch (_) {
+    return '';
+  }
+}
 
 // ---------- 本地快照差分（纯函数，便于测试） ----------
 // prevSnaps: [{date, baseBalance, balance, spend, recharged, updatedAt}]

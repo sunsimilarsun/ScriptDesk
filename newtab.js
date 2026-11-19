@@ -548,7 +548,12 @@ $('drawer-body').addEventListener('click', async (e) => {
         const { getLoginUrl, CARRIERS } = await import('./core/cookie-sync.js');
         window.open(getLoginUrl(carrier), '_blank', 'noopener');
         const name = CARRIERS[carrier]?.name || '官网';
-        if (hint) { hint.textContent = `登录完成后回到 ${name} 任一页面，令牌会被自动捕获并填入（点「测试连接」验证）`; hint.className = 'cookie-hint'; }
+        if (hint) {
+          hint.textContent = carrier === 'workbuddy'
+            ? `已在浏览器登录 ${name} 后即可读取余额（会自动用登录 Cookie 兜底）。建议顺带打开「套餐与积分」页一次，令牌会额外被自动捕获。点「测试连接」验证`
+            : `登录完成后回到 ${name} 任一页面，令牌会被自动捕获并填入（点「测试连接」验证）`;
+          hint.className = 'cookie-hint';
+        }
       } catch (err) {
         if (hint) { hint.textContent = `打开失败：${err.message}`; hint.className = 'cookie-hint'; }
       }
