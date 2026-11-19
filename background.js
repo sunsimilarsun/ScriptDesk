@@ -80,6 +80,12 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
     });
     return true;
   }
+  if (req.action === 'readCookies' && req.domains) {
+    // chrome://newtab 覆盖页里 chrome.cookies 可能读不到 Cookie（浏览器安全限制），
+    // 由页面把读 Cookie 委托给 service worker 执行，这里 chrome.cookies 肯定可用。
+    readCookiesForDomains(req.domains).then((result) => sendResponse(result)).catch((e) => sendResponse({ cookieStr: '', names: [], error: e.message }));
+    return true;
+  }
   if (req.action === 'refreshAll') {
     refreshAll(true).then(() => sendResponse({ success: true }));
     return true;
@@ -94,6 +100,37 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
     return true;
   }
 });
+
+// 在 service worker 里读指定域名（含其子域）的全部 Cookie，拼成 Cookie 串返回。
+// chrome:// 内部页无法直接读 Cookie，故统一走这里。
+async function readCookiesForDomains(domains) {
+  const all = [];
+  for (const d of domains) {
+    try {
+      const list = await chrome.cookies.getAll({ domain: d });
+      if (Array.isArray(list)) all.push(...list);
+    } catch (_) { /* 单个域失败继续 */ }
+  }
+  // 兜底：全量拉取再按域名过滤
+  try {
+    const allCookies = await chrome.cookies.getAll({});
+    for (const c of allCookies) {
+      const host = String(c.domain || '').replace(/^\./, '').toLowerCase();
+      if (domains.some((d) => host === d.replace(/^\./, '').toLowerCase() || host.endsWith('.' + d.replace(/^\./, '').toLowerCase()))) {
+        all.push(c);
+      }
+    }
+  } catch (_) { /* 忽略 */ }
+
+  const seen = new Map();
+  for (const c of all) {
+    if (c.name && c.value !== undefined) seen.set(`${c.name}@${c.domain}${c.path}`, c);
+  }
+  const cookies = [...seen.values()];
+  const names = cookies.map((c) => c.name);
+  const pairs = cookies.map((c) => `${c.name}=${c.value}`);
+  return { cookieStr: pairs.length ? pairs.join('; ') : '', names };
+}
 
 // ---------- Codex token 自动捕获 ----------
 // ChatGPT 网页的 Codex 面板会调用 wham/usage，其请求头带现成的 OAuth token。

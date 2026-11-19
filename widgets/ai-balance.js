@@ -451,11 +451,26 @@ async function fetchWorkbuddyResource(config, ctx) {
 }
 
 // 读 workbuddy 域全部 Cookie（含 HttpOnly），返回 { cookieStr, names }
+// 关键：chrome://newtab 覆盖页里 chrome.cookies 可能读不到 Cookie（浏览器安全限制），
+// 页面上下文通过消息委托给 background service worker 读取（那里 chrome.cookies 肯定可用）；
+// service worker 里则直接读。
 async function readWorkbuddyCookie() {
   const empty = { cookieStr: '', names: [] };
+  const domains = ['workbuddy.cn', 'www.workbuddy.cn', 'workbuddy.ai', 'www.workbuddy.ai'];
+
+  // 页面上下文（有 window）→ 委托 background 读
+  if (typeof window !== 'undefined' && typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+    try {
+      const res = await chrome.runtime.sendMessage({ action: 'readCookies', domains });
+      if (res && res.cookieStr) return { cookieStr: res.cookieStr, names: res.names || [] };
+      if (res && res.error) console.warn('[workbuddy] background 读 Cookie 失败：', res.error);
+    } catch (e) {
+      console.warn('[workbuddy] 委托 background 读 Cookie 异常：', e.message);
+    }
+  }
+
+  // service worker 上下文直接读
   try {
-    // chrome.cookies.getAll({domain}) 匹配该域及其子域；去掉带前导点的写法（API 不接受）
-    const domains = ['workbuddy.cn', 'www.workbuddy.cn', 'workbuddy.ai', 'www.workbuddy.ai'];
     const all = [];
     for (const d of domains) {
       try {
@@ -463,12 +478,11 @@ async function readWorkbuddyCookie() {
         if (Array.isArray(list)) all.push(...list);
       } catch (_) { /* 单个域失败继续 */ }
     }
-    // 兜底：全量拉取并过滤（避免漏掉特殊 domain 写法，如 .www.workbuddy.cn 等）
     try {
       const allCookies = await chrome.cookies.getAll({});
       for (const c of allCookies) {
         const host = String(c.domain || '').replace(/^\./, '').toLowerCase();
-        if (host === 'workbuddy.cn' || host.endsWith('.workbuddy.cn') || host === 'workbuddy.ai' || host.endsWith('.workbuddy.ai')) {
+        if (domains.some((d) => host === d || host.endsWith('.' + d))) {
           all.push(c);
         }
       }
