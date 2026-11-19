@@ -48,6 +48,18 @@ export const CARRIERS = {
     loginUrl: 'https://chatgpt.com/settings/usage?tab=overview',
     ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     referer: 'https://chatgpt.com/'
+  },
+  // MoeRouter 等 new-api 系中转站：真实余额在 /api/user/self，登录态靠 moerouter.com 域 Cookie + nap_ 访问令牌
+  moerouter: {
+    name: 'MoeRouter',
+    domains: ['moerouter.com'],
+    urls: [
+      'https://moerouter.com/console',
+      'https://moerouter.com/'
+    ],
+    loginUrl: 'https://moerouter.com/sign-in',
+    ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    referer: 'https://moerouter.com/'
   }
 };
 

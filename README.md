@@ -12,7 +12,7 @@
 |---|---|
 | 📶 订阅余量 | 解析 `subscription-userinfo`，显示剩余流量与到期 |
 | 📱 话费三环 | 联通话费 / 流量 / 语音（含余量查询页接口） |
-| 🤖 AI 余额 | DeepSeek / 硅基流动 / OpenRouter / New API / OpenAI / Anthropic 余额与日耗 |
+| 🤖 AI 余额 | DeepSeek / 硅基流动 / OpenRouter / New API / MoeRouter / OpenAI / Anthropic 余额与日耗 |
 | 🔥 热榜 | V2EX / Hacker News |
 | 🔢 任意 API | 通用 JSON 取值 |
 | ⏳ 倒数日 | 倒数日与快捷入口 |
@@ -35,7 +35,7 @@
 ```
 ScriptDesk/
 ├── manifest.json          # MV3 清单
-├── background.js          # Service Worker 调度中心（按实例取数 + 缓存 + Codex token 捕获）
+├── background.js          # Service Worker 调度中心（按实例取数 + 缓存 + Codex / MoeRouter token 捕获）
 ├── newtab.html/css/js     # 起始页（双模式画布）
 ├── popup.html/js          # 工具栏弹窗（订阅余量）
 ├── core/

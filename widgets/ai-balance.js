@@ -236,6 +236,55 @@ const PLATFORMS = {
     }
   },
 
+  // MoeRouter 等 new-api 系中转站：真实人民币余额在 /api/user/self（需登录态访问令牌 nap_...，
+  // 而非 sk- 开头的 API Key）。quota 按 quota_per_unit 换算美元，再按汇率折算人民币展示。
+  moerouter: {
+    name: 'MoeRouter',
+    consoleUrl: 'https://moerouter.com/console',
+    needsKey: false, // 走登录态访问令牌，不是 API Key
+    async fetch(config, ctx) {
+      const base = (config.baseUrl || 'https://moerouter.com').replace(/\/+$/, '');
+      // 访问令牌两级降级：优先用组件里手动填的 accessToken，为空则回退读 webRequest 自动捕获的 moerouterAuth
+      let token = (config.accessToken || '').trim();
+      if (!token) {
+        try {
+          const got = await chrome.storage.local.get(['moerouterAuth']);
+          token = got.moerouterAuth?.access_token || '';
+        } catch (_) { /* storage 不可用视为无 */ }
+      }
+      if (!token) {
+        throw new Error('未获取访问令牌：请打开 moerouter.com 登录一次（自动捕获），或手动粘贴 nap_ 开头的访问令牌');
+      }
+      // 访问令牌走 /api/user/self（Nap 前缀 access token，非 sk- API Key）
+      const json = await req(ctx, `${base}/api/user/self`, {
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json'
+      });
+      const d = json.data || json;
+      const quota = num(d.quota);
+      const used = num(d.used_quota);
+      if (d.quota === undefined && d.used_quota === undefined) {
+        throw new Error('响应缺少 quota / used_quota 字段，请确认令牌有效或接口结构');
+      }
+      // new-api 口径：quota_per_unit 默认为 500000（= 1 美元），按汇率折算人民币
+      const perUnit = num(config.quotaPerUnit || 500000);
+      const rate = num(config.exchangeRate || 7.3);
+      const totalCny = round2(quota / perUnit * rate);
+      const usedCny = round2(used / perUnit * rate);
+      const remainCny = round2(Math.max(0, totalCny - usedCny));
+      return {
+        currency: '¥', primaryValue: remainCny, primaryLabel: '余额', balance: remainCny, isSpendType: false,
+        totalQuota: totalCny,
+        extra: [
+          { label: '账户', value: (d.display_name || d.username || d.id || '').slice(0, 14) || '—' },
+          { label: '总额度', value: `¥${totalCny}` },
+          { label: '已用', value: `¥${usedCny}` },
+          { label: '请求次数', value: `${d.request_count ?? 0}` }
+        ]
+      };
+    }
+  },
+
   'openai-admin': {
     name: 'OpenAI Admin',
     consoleUrl: 'https://platform.openai.com/usage',
@@ -374,6 +423,7 @@ export async function testConnection(config, ctx) {
   const platform = config.platform || 'deepseek';
   const adapter = PLATFORMS[platform] || PLATFORMS.deepseek;
   if (adapter.needsKey !== false && !config.apiKey) throw new Error('请先填写 API Key');
+  // moerouter 走登录态访问令牌（needsKey=false），token 为空时由适配器内部报错提示
   const data = await adapter.fetch(config, ctx);
   return {
     platformName: adapter.name,
@@ -396,10 +446,14 @@ export default {
       { value: 'siliconflow', label: '硅基流动' },
       { value: 'openrouter', label: 'OpenRouter' },
       { value: 'newapi', label: 'New API / 自建中转' },
+      { value: 'moerouter', label: 'MoeRouter 中转站' },
       { value: 'openai-admin', label: 'OpenAI Admin' },
       { value: 'anthropic-admin', label: 'Anthropic Admin' }
     ] },
     { key: 'apiKey', label: 'API Key（仅存本机）', type: 'password', testable: true, placeholder: 'sk-... / x-api-key' },
+    { key: 'accessToken', label: '访问令牌（MoeRouter 用，nap_ 开头）', type: 'password', platforms: ['moerouter'], carrier: 'moerouter', testable: true, placeholder: 'nap_...（登录后自动捕获，或手动粘贴）' },
+    { key: 'quotaPerUnit', label: '额度换算单位（quota 每单位对应美元）', type: 'number', platforms: ['moerouter'], default: 500000 },
+    { key: 'exchangeRate', label: '美元兑人民币汇率', type: 'number', platforms: ['moerouter'], default: 7.3 },
     { key: 'sfMode', label: '硅基流动取数方式', type: 'select', default: 'web', platforms: ['siliconflow'], options: [
       { value: 'web', label: '国内站 · 控制台登录态（默认，API 已下线）' },
       { value: 'api', label: '国际站 · API Key（api.siliconflow.com）' }

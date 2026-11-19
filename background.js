@@ -99,6 +99,12 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
 // ChatGPT 网页的 Codex 面板会调用 wham/usage，其请求头带现成的 OAuth token。
 // 这里拦截该请求，把 Authorization Bearer token + account_id 写入 storage，
 // 使「订阅额度」卡无需 codex login / 手动导入 auth.json 也能自动拿到登录态。
+//
+// 性能要点：wham/usage 会被网页高频请求，因此这里做两重防护：
+//  1) 仅当 token 与已存的相比真正变化时才写 storage（避免无意义写入触发的 storage.onChanged 风暴）；
+//  2) 写后只刷新「订阅额度」那一张卡（refreshInstance），绝不全量 refreshAll。
+let _lastCodexToken = null; // 已写入 storage 的 token，用于去重
+
 function extractCodexAuth(details) {
   try {
     const authHeader = details.requestHeaders?.find(
@@ -107,6 +113,8 @@ function extractCodexAuth(details) {
     if (!authHeader.startsWith('Bearer ')) return;
     const token = authHeader.slice(7).trim();
     if (!token) return;
+    // token 未变化则直接跳过（高频请求的主要去重点）
+    if (token === _lastCodexToken) return;
 
     const acctHeader = details.requestHeaders?.find(
       (h) => h.name.toLowerCase() === 'chatgpt-account-id'
@@ -123,17 +131,64 @@ function extractCodexAuth(details) {
       } catch (_) { /* 忽略解析失败 */ }
     }
 
+    _lastCodexToken = token;
     const record = { access_token: token, account_id: accountId, savedAt: Date.now(), source: 'webRequest' };
     chrome.storage.local.set({ codexAuth: record }).then(() => {
-      // 捕获到新 token 后，若存在订阅额度卡，立刻强制刷新一次让它用上
-      refreshAll(true);
+      // 仅刷新「订阅额度」卡，避免高频触发导致全量卡顿
+      refreshSubscriptionOnly();
     });
   } catch (_) { /* 静默：捕获失败不影响其它组件 */ }
+}
+
+// 只刷新 type=subscription 的实例（token 变化时让额度卡即时更新，不波及其它组件）
+async function refreshSubscriptionOnly() {
+  return refreshTypeOnly('subscription');
 }
 
 chrome.webRequest.onBeforeSendHeaders.addListener(
   extractCodexAuth,
   { urls: ['*://chatgpt.com/backend-api/wham/usage*'] },
+  ['requestHeaders']
+);
+
+// ---------- MoeRouter token 自动捕获 ----------
+// MoeRouter 等 new-api 系中转站网页登录后会调 /api/user/self 查询个人余额，
+// 其请求头带现成的访问令牌（Authorization: Bearer nap_...）。
+// 这里拦截该请求写入 storage，使「AI 余额 · MoeRouter」卡无需手动粘贴令牌。
+// 同样做 token 去重 + 精准刷新（只刷新 ai-balance 实例），避免高频风暴。
+let _lastMoerouterToken = null;
+
+function extractMoerouterAuth(details) {
+  try {
+    const authHeader = details.requestHeaders?.find(
+      (h) => h.name.toLowerCase() === 'authorization'
+    )?.value || '';
+    if (!authHeader.startsWith('Bearer ')) return;
+    const token = authHeader.slice(7).trim();
+    if (!token || !token.startsWith('nap_')) return; // 只认 new-api 访问令牌
+    if (token === _lastMoerouterToken) return;
+
+    _lastMoerouterToken = token;
+    chrome.storage.local.set({
+      moerouterAuth: { access_token: token, savedAt: Date.now(), source: 'webRequest' }
+    }).then(() => {
+      refreshTypeOnly('ai-balance');
+    });
+  } catch (_) { /* 静默 */ }
+}
+
+// 只刷新指定 type 的实例（token 变化时让对应卡即时更新，不波及其它组件）
+async function refreshTypeOnly(type) {
+  try {
+    const layout = await getLayout();
+    const matches = layout.filter((i) => i.type === type);
+    await Promise.allSettled(matches.map((inst) => runInstance(inst, true)));
+  } catch (_) { /* 静默 */ }
+}
+
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  extractMoerouterAuth,
+  { urls: ['*://moerouter.com/api/user/self*'] },
   ['requestHeaders']
 );
 

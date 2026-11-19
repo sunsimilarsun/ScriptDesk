@@ -9,7 +9,7 @@ const ICONS = { subinfo: '📶', telecom: '📱', 'ai-balance': '🤖', hotlist:
 const DESCS = {
   subinfo: '订阅流量与到期',
   telecom: '话费 / 流量 / 语音三环',
-  'ai-balance': 'DeepSeek / 硅基流动 / OpenRouter 等余额与日耗',
+  'ai-balance': 'DeepSeek / 硅基流动 / OpenRouter / MoeRouter 等余额与日耗',
   hotlist: 'V2EX / Hacker News',
   'generic-json': '任意 API 取值',
   countdown: '倒数日与快捷入口',
@@ -207,10 +207,17 @@ function fieldHtml(field, value) {
   }
   // password / text / number 等原生类型（API Key 走 password，仅落 storage.local）
   const input = `<input type="${field.type || 'text'}" data-key="${esc(field.key)}" value="${v}" placeholder="${esc(field.placeholder || '')}">`;
+  // carrier 字段（如 moerouter 的 accessToken）：渲染「去官网登录」按钮，登录后由后台 webRequest 自动捕获令牌
+  const carrierTools = field.carrier
+    ? `<div class="cookie-tools">
+        <button type="button" data-token-action="login-carrier" data-carrier="${esc(field.carrier)}">去官网登录（自动捕获令牌）</button>
+      </div>
+      <div class="cookie-hint" data-token-hint></div>`
+    : '';
   const test = field.testable
     ? `<div class="api-tools"><button type="button" data-action="test-api">测试连接</button></div><div class="api-test-hint" data-api-hint></div>`
     : '';
-  return `<div class="cfg-field"${cond}><label>${esc(field.label)}</label>${input}${test}</div>`;
+  return `<div class="cfg-field"${cond}><label>${esc(field.label)}</label>${input}${carrierTools}${test}</div>`;
 }
 
 // 平台条件字段显隐（如 AI 余额的 Base URL / Organization ID / 端点选择）
@@ -534,6 +541,18 @@ $('drawer-body').addEventListener('click', async (e) => {
   const tokenBtn = e.target.closest('[data-token-action]');
   if (tokenBtn) {
     const hint = $('drawer-body').querySelector('[data-token-hint]');
+    // carrier 类字段（如 moerouter accessToken）：去官网登录，登录后后台 webRequest 自动捕获令牌
+    if (tokenBtn.dataset.tokenAction === 'login-carrier') {
+      const carrier = tokenBtn.dataset.carrier || 'moerouter';
+      try {
+        const { getLoginUrl } = await import('./core/cookie-sync.js');
+        window.open(getLoginUrl(carrier), '_blank', 'noopener');
+        if (hint) { hint.textContent = '登录完成后回到 moerouter.com 任一页面，令牌会被自动捕获并填入（点「测试连接」验证）'; hint.className = 'cookie-hint'; }
+      } catch (err) {
+        if (hint) { hint.textContent = `打开失败：${err.message}`; hint.className = 'cookie-hint'; }
+      }
+      return;
+    }
     if (tokenBtn.dataset.tokenAction === 'clear') {
       await chrome.storage.local.remove(['codexAuth']);
       if (hint) { hint.textContent = '已清除导入的登录态'; hint.className = 'cookie-hint'; }
@@ -687,11 +706,17 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'e' || e.key === 'E') setMode(state.mode === 'view' ? 'edit' : 'view');
 });
 
-// 后台数据更新后自动刷新视图
+// 后台数据更新后自动刷新视图。
+// 防抖：refreshAll 会连续写入多个 cache:* key，逐条触发 load+renderGrid 会造成整页高频重绘抖动；
+// 这里合并 250ms 内的多次变更，只做一次重渲染。
+let _renderDebounce = null;
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && Object.keys(changes).some((k) => k.startsWith('cache:'))) {
+  if (area !== 'local') return;
+  if (!Object.keys(changes).some((k) => k.startsWith('cache:'))) return;
+  clearTimeout(_renderDebounce);
+  _renderDebounce = setTimeout(() => {
     load().then(renderGrid);
-  }
+  }, 250);
 });
 
 // 网络恢复时自动重测网络状态组件（network-status 依赖在线探测）
