@@ -36,6 +36,18 @@ export const CARRIERS = {
     loginUrl: 'https://cloud.siliconflow.cn/me/expensebill',
     ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     referer: 'https://cloud.siliconflow.cn/'
+  },
+  // ChatGPT / Codex：套餐限额来自内部接口 wham/usage，登录态靠 chatgpt.com 域 Cookie
+  chatgpt: {
+    name: 'ChatGPT / Codex',
+    domains: ['chatgpt.com'],
+    urls: [
+      'https://chatgpt.com/settings/usage',
+      'https://chatgpt.com/'
+    ],
+    loginUrl: 'https://chatgpt.com/settings/usage?tab=overview',
+    ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    referer: 'https://chatgpt.com/'
   }
 };
 

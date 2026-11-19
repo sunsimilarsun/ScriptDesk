@@ -1,10 +1,11 @@
 // 起始页：双模式多实例画布。查看模式秒开读缓存；编辑模式支持拖拽、增删、配置。
 import { WIDGETS, WIDGET_MAP, createInstance } from './core/registry.js';
 import { getLayout, saveLayout, getAllCache, newInstanceId } from './core/storage.js';
+import { buildExport, redactLayout, validateImport, exportFilename, downloadJson } from './core/config-io.js';
 
 const $ = (id) => document.getElementById(id);
 const grid = $('grid');
-const ICONS = { subinfo: '📶', telecom: '📱', 'ai-balance': '🤖', hotlist: '🔥', 'generic-json': '🔢', countdown: '⏳', rss: '📰', 'github-heatmap': '🟩', market: '💱', 'network-status': '🌐' };
+const ICONS = { subinfo: '📶', telecom: '📱', 'ai-balance': '🤖', hotlist: '🔥', 'generic-json': '🔢', countdown: '⏳', rss: '📰', 'github-heatmap': '🟩', market: '💱', 'network-status': '🌐', subscription: '🗓️' };
 const DESCS = {
   subinfo: '订阅流量与到期',
   telecom: '话费 / 流量 / 语音三环',
@@ -15,13 +16,29 @@ const DESCS = {
   rss: 'RSS / Atom 订阅聚合',
   'github-heatmap': 'GitHub 提交热力图与连续天数',
   market: '汇率 / 加密行情 / 指数',
-  'network-status': '直连 / 代理探测'
+  'network-status': '直连 / 代理探测',
+  subscription: 'Codex / ChatGPT 套餐限额'
 };
 
 const state = { mode: 'view', layout: [], cache: {}, editingId: null, draggingId: null };
 
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// 轻量 toast 提示（复制 IP、导入导出等）
+let _toastTimer = null;
+function showToast(msg) {
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
+}
 
 async function load() {
   state.layout = await getLayout();
@@ -72,6 +89,20 @@ function renderGrid() {
       <button data-action="delete" title="删除">🗑</button>
       <button data-action="refresh" title="刷新">↻</button>`;
     card.appendChild(actions);
+
+    // 底部小号更新时间脚注（有数据的卡统一展示，不占用标题空间）
+    if (rec.updatedAt && typeof widget.fetchData === 'function') {
+      const updated = document.createElement('div');
+      updated.className = 'w-updated';
+      updated.title = new Date(rec.updatedAt).toLocaleString('zh-CN');
+      updated.textContent = '更新 ' + new Date(rec.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+      card.appendChild(updated);
+    }
+
+    // 标题元素统一加 title 悬浮全称
+    const titleEl = card.querySelector('.w-title');
+    if (titleEl && !titleEl.title) titleEl.title = titleEl.textContent.trim();
+
     grid.appendChild(card);
   }
 
@@ -91,7 +122,7 @@ function setMode(mode) {
   state.mode = mode;
   document.body.dataset.mode = mode;
   $('btn-mode').textContent = mode === 'edit' ? '✓ 完成' : '✎ 编辑';
-  if (mode === 'view') { closeEditor(); closeLibrary(); }
+  if (mode === 'view') { closeEditor(); closeLibrary(); closeSettings(); }
   renderGrid();
 }
 
@@ -129,23 +160,49 @@ function fieldHtml(field, value) {
   const v = esc(value ?? field.default ?? '');
   // 平台条件字段：只在选中的平台下显示
   const plat = field.platforms ? ` data-platforms="${field.platforms.join(',')}"` : '';
+  // 模式条件字段：只在选中的取数模式下显示（订阅额度的 local / scrape）
+  const modes = field.modes ? ` data-modes="${field.modes.join(',')}"` : '';
+  const cond = plat + modes;
   if (field.type === 'select') {
     const opts = (field.options || []).map((o) =>
       `<option value="${esc(o.value)}" ${String(value ?? field.default) === String(o.value) ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
-    return `<div class="cfg-field"${plat}><label>${esc(field.label)}</label><select data-key="${esc(field.key)}">${opts}</select></div>`;
+    return `<div class="cfg-field"${cond}><label>${esc(field.label)}</label><select data-key="${esc(field.key)}">${opts}</select></div>`;
   }
   if (field.type === 'textarea') {
-    return `<div class="cfg-field"${plat}><label>${esc(field.label)}</label><textarea data-key="${esc(field.key)}" placeholder="${esc(field.placeholder || '')}">${v}</textarea></div>`;
+    return `<div class="cfg-field"${cond}><label>${esc(field.label)}</label><textarea data-key="${esc(field.key)}" placeholder="${esc(field.placeholder || '')}">${v}</textarea></div>`;
   }
   if (field.type === 'cookie') {
-    return `<div class="cfg-field"${plat}>
+    // carrier 显式指定同步运营商（如 subscription 的 chatgpt）；carrier:false 则不渲染同步按钮。
+    const carrier = field.carrier || '';
+    const tools = field.carrier !== false
+      ? `<div class="cookie-tools">
+          <button type="button" data-cookie-action="login"${carrier ? ` data-carrier="${esc(carrier)}"` : ''}>去官网登录</button>
+          <button type="button" data-cookie-action="sync" class="primary"${carrier ? ` data-carrier="${esc(carrier)}"` : ''}>同步浏览器 Cookie</button>
+        </div>
+        <div class="cookie-hint" data-cookie-hint></div>`
+      : '';
+    return `<div class="cfg-field"${cond}>
       <label>${esc(field.label)}</label>
       <textarea data-key="${esc(field.key)}" placeholder="${esc(field.placeholder || '')}">${v}</textarea>
+      ${tools}
+    </div>`;
+  }
+  if (field.type === 'checkbox') {
+    const checked = (value ?? field.default) === true || value === 'true' || value === 1 || value === '1' ? 'checked' : '';
+    return `<div class="cfg-field"${cond}><label>${esc(field.label)}</label>
+      <div class="cfg-check"><input type="checkbox" data-key="${esc(field.key)}" ${checked}><span>${esc(field.label)}</span></div></div>`;
+  }
+  if (field.type === 'token-import') {
+    const checked = (value ?? field.default) === true || value === 'true' || value === 1 || value === '1' ? 'checked' : '';
+    return `<div class="cfg-field"${cond}>
+      <label>${esc(field.label)}</label>
+      <div class="cfg-check"><input type="checkbox" data-key="${esc(field.key)}" ${checked}><span>启用</span></div>
       <div class="cookie-tools">
-        <button type="button" data-cookie-action="login">去官网登录</button>
-        <button type="button" data-cookie-action="sync" class="primary">同步浏览器 Cookie</button>
+        <button type="button" data-token-action="cookie" class="primary">同步 Cookie 换 token</button>
+        <button type="button" data-token-action="import">导入 auth.json</button>
+        <button type="button" data-token-action="clear">清除已导入</button>
       </div>
-      <div class="cookie-hint" data-cookie-hint></div>
+      <div class="cookie-hint" data-token-hint></div>
     </div>`;
   }
   // password / text / number 等原生类型（API Key 走 password，仅落 storage.local）
@@ -153,7 +210,7 @@ function fieldHtml(field, value) {
   const test = field.testable
     ? `<div class="api-tools"><button type="button" data-action="test-api">测试连接</button></div><div class="api-test-hint" data-api-hint></div>`
     : '';
-  return `<div class="cfg-field"${plat}><label>${esc(field.label)}</label>${input}${test}</div>`;
+  return `<div class="cfg-field"${cond}><label>${esc(field.label)}</label>${input}${test}</div>`;
 }
 
 // 平台条件字段显隐（如 AI 余额的 Base URL / Organization ID / 端点选择）
@@ -163,6 +220,16 @@ function applyPlatformVisibility() {
   const val = sel.value;
   $('drawer-body').querySelectorAll('.cfg-field[data-platforms]').forEach((f) => {
     f.style.display = f.dataset.platforms.split(',').includes(val) ? '' : 'none';
+  });
+}
+
+// 模式条件字段显隐（订阅额度的 local / scrape 两套字段）
+function applyModeVisibility() {
+  const sel = $('drawer-body').querySelector('[data-key="mode"]');
+  if (!sel) return;
+  const val = sel.value;
+  $('drawer-body').querySelectorAll('.cfg-field[data-modes]').forEach((f) => {
+    f.style.display = f.dataset.modes.split(',').includes(val) ? '' : 'none';
   });
 }
 
@@ -192,6 +259,7 @@ function openEditor(id) {
   state._prevDefaultUrl = typeof widget.defaultLinkUrl === 'function'
     ? (widget.defaultLinkUrl(cfg) || '') : '';
   applyPlatformVisibility();
+  applyModeVisibility();
   $('drawer').hidden = false;
   $('drawer-mask').hidden = false;
 }
@@ -215,7 +283,7 @@ async function saveEditor() {
   }
   inst.config = inst.config || {};
   $('drawer-body').querySelectorAll('[data-key]').forEach((el) => {
-    inst.config[el.dataset.key] = el.value.trim();
+    inst.config[el.dataset.key] = el.type === 'checkbox' ? el.checked : el.value.trim();
   });
   closeEditor();
   await persist();
@@ -242,6 +310,65 @@ function openLibrary() {
 function closeLibrary() {
   $('library').hidden = true;
   $('drawer-mask').hidden = true;
+}
+
+// ---------- 全局设置抽屉：备份与恢复 ----------
+function openSettings() {
+  $('settings').hidden = false;
+  $('drawer-mask').hidden = false;
+}
+
+function closeSettings() {
+  $('settings').hidden = true;
+  $('drawer-mask').hidden = true;
+}
+
+function setIoHint(msg, cls) {
+  const el = $('cfg-io-hint');
+  el.textContent = msg;
+  el.className = 'cfg-io-hint' + (cls ? ' ' + cls : '');
+}
+
+async function exportConfig() {
+  try {
+    const layout = await getLayout();
+    const settings = (await chrome.storage.local.get(['settings'])).settings || {};
+    const redact = $('cfg-export-redact').checked;
+    const payload = buildExport({ layout: redactLayout(layout, redact), settings });
+    downloadJson(payload, exportFilename());
+    setIoHint(`已导出 ${layout.length} 个组件${redact ? '（已脱敏敏感凭据）' : ''}`, 'ok');
+  } catch (err) {
+    setIoHint(`导出失败：${err.message}`, 'err');
+  }
+}
+
+function importConfig() {
+  $('cfg-import-file').click();
+}
+
+async function handleImportFile(file) {
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const result = validateImport(data);
+    if (!result.ok) { setIoHint(`导入失败：${result.error}`, 'err'); return; }
+    const { settings, layout } = result.value;
+    const confirmed = confirm(
+      `确定导入该配置吗？将覆盖当前 ${state.layout.length} 个组件布局为 ${layout.length} 个组件。`
+    );
+    if (!confirmed) { setIoHint('已取消导入'); return; }
+    await saveLayout(layout);
+    if (settings && typeof settings === 'object') {
+      await chrome.storage.local.set({ settings });
+    }
+    await chrome.runtime.sendMessage({ action: 'layoutChanged' });
+    await chrome.runtime.sendMessage({ action: 'refreshAll' });
+    await load();
+    renderGrid();
+    setIoHint(`导入成功，已恢复 ${layout.length} 个组件并触发刷新`, 'ok');
+  } catch (err) {
+    setIoHint(`导入失败：${err.message || '文件解析错误'}`, 'err');
+  }
 }
 
 async function addInstance(type) {
@@ -286,6 +413,16 @@ grid.addEventListener('click', (e) => {
   if (action === 'reprobe') { // 网络状态：一键重新探测
     e.preventDefault();
     return refreshInstance(inst.instanceId);
+  }
+  // 网络状态：点击出口 IP 一键复制（不触发整卡跳转）
+  const ipEl = e.target.closest('.ns-ip[data-ip]');
+  if (ipEl && ipEl.dataset.ip) {
+    e.preventDefault();
+    e.stopPropagation();
+    navigator.clipboard?.writeText(ipEl.dataset.ip).then(() => {
+      showToast(`已复制 IP ${ipEl.dataset.ip}`);
+    }).catch(() => showToast('复制失败，请手动复制'));
+    return;
   }
   if (e.target.closest('a, button')) return; // 放行组件内部子链接
   if (inst.linkUrl) {
@@ -349,9 +486,20 @@ $('btn-refresh-all').addEventListener('click', async () => {
 });
 $('btn-close-drawer').addEventListener('click', closeEditor);
 $('btn-close-library').addEventListener('click', closeLibrary);
-$('drawer-mask').addEventListener('click', () => { closeEditor(); closeLibrary(); });
+$('drawer-mask').addEventListener('click', () => { closeEditor(); closeLibrary(); closeSettings(); });
 $('btn-save-settings').addEventListener('click', saveEditor);
 $('btn-delete-instance').addEventListener('click', () => removeInstance(state.editingId));
+
+// 全局设置抽屉
+$('btn-settings').addEventListener('click', openSettings);
+$('btn-close-settings').addEventListener('click', closeSettings);
+$('btn-export-config').addEventListener('click', exportConfig);
+$('btn-import-config').addEventListener('click', importConfig);
+$('cfg-import-file').addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+  if (file) handleImportFile(file);
+  e.target.value = ''; // 允许重复选择同一文件
+});
 $('library-body').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-add-type]');
   if (btn) addInstance(btn.dataset.addType);
@@ -382,11 +530,96 @@ $('drawer-body').addEventListener('click', async (e) => {
     }
     return;
   }
+  // 订阅额度：导入 auth.json（File System Access API 选文件 → 解析 token → 存 storage）
+  const tokenBtn = e.target.closest('[data-token-action]');
+  if (tokenBtn) {
+    const hint = $('drawer-body').querySelector('[data-token-hint]');
+    if (tokenBtn.dataset.tokenAction === 'clear') {
+      await chrome.storage.local.remove(['codexAuth']);
+      if (hint) { hint.textContent = '已清除导入的登录态'; hint.className = 'cookie-hint'; }
+      return;
+    }
+    // cookie：用浏览器 chatgpt.com 登录态调 api/auth/session 换 accessToken
+    if (tokenBtn.dataset.tokenAction === 'cookie') {
+      tokenBtn.textContent = '获取中…';
+      try {
+        const { syncBrowserCookie } = await import('./core/cookie-sync.js');
+        const cookie = await syncBrowserCookie('chatgpt');
+        // 用 Cookie 会话态请求 session 接口换取 accessToken
+        const res = await fetch('https://chatgpt.com/api/auth/session', {
+          headers: { 'Cookie': cookie, 'Accept': 'application/json' },
+          credentials: 'omit'
+        });
+        if (!res.ok) throw new Error(`session 接口返回 HTTP ${res.status}（可能登录态过期）`);
+        const json = await res.json();
+        const accessToken = json?.accessToken || '';
+        if (!accessToken) throw new Error('session 接口未返回 accessToken（可能未登录 chatgpt.com）');
+        // account_id 需从 accessToken 的 JWT payload 解析（user.id 是 user 维度，非 account 维度）
+        let accountId = json?.user?.id || '';
+        try {
+          const seg = accessToken.split('.')[1];
+          const payload = JSON.parse(atob(seg.replace(/-/g, '+').replace(/_/g, '/')));
+          accountId = payload['https://api.openai.com/auth']?.chatgpt_account_id || accountId;
+        } catch (_) { /* 解析失败则退回 user.id */ }
+        await chrome.storage.local.set({
+          codexAuth: {
+            access_token: accessToken,
+            account_id: accountId,
+            savedAt: Date.now(),
+            source: 'cookie'
+          }
+        });
+        const chk = $('drawer-body').querySelector('[data-key="autoToken"]');
+        if (chk) chk.checked = true;
+        if (hint) { hint.textContent = '已通过 Cookie 获取登录态，点「保存」后生效'; hint.className = 'cookie-hint'; }
+      } catch (err) {
+        if (hint) { hint.textContent = `获取失败：${err.message}`; hint.className = 'cookie-hint'; }
+      } finally {
+        tokenBtn.textContent = '同步 Cookie 换 token';
+      }
+      return;
+    }
+    // import
+    tokenBtn.textContent = '读取中…';
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        multiple: false,
+        types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }],
+        excludeAcceptAllOption: true
+      });
+      const file = await handle.getFile();
+      const text = await file.text();
+      const auth = JSON.parse(text);
+      const tokens = auth?.tokens || {};
+      if (!tokens.access_token || !tokens.account_id) {
+        throw new Error('不是有效的 Codex auth.json（缺少 tokens.access_token / tokens.account_id）');
+      }
+      await chrome.storage.local.set({
+        codexAuth: {
+          access_token: tokens.access_token,
+          account_id: tokens.account_id,
+          savedAt: Date.now()
+        }
+      });
+      // 勾选「启用」
+      const chk = $('drawer-body').querySelector('[data-key="autoToken"]');
+      if (chk) chk.checked = true;
+      if (hint) { hint.textContent = '已导入登录态（token 仅存本机，10 天左右过期后需重导）'; hint.className = 'cookie-hint'; }
+    } catch (err) {
+      if (err.name !== 'AbortError' && hint) {
+        hint.textContent = `导入失败：${err.message}`; hint.className = 'cookie-hint';
+      }
+    } finally {
+      tokenBtn.textContent = '导入 auth.json';
+    }
+    return;
+  }
   const btn = e.target.closest('[data-cookie-action]');
   if (!btn) return;
-  // 话费卡读 operator；AI 余额卡读 platform（硅基流动取数需要控制台 Cookie）
-  const operator = $('drawer-body').querySelector('[data-key="operator"]')?.value
-    || $('drawer-body').querySelector('[data-key="platform"]')?.value || 'unicom';
+  const operator = btn.dataset.carrier
+    || $('drawer-body').querySelector('[data-key="operator"]')?.value
+    || $('drawer-body').querySelector('[data-key="platform"]')?.value
+    || 'unicom';
   const hint = $('drawer-body').querySelector('[data-cookie-hint]');
   const cookieEl = $('drawer-body').querySelector('[data-key="cookie"]');
 
@@ -413,6 +646,26 @@ $('drawer-body').addEventListener('click', async (e) => {
 
 // 平台切换：条件字段显隐 + 自动更新账单控制台跳转链接（仅当未自定义时）
 $('drawer-body').addEventListener('change', (e) => {
+  if (e.target?.dataset?.key === 'mode') {
+    applyModeVisibility();
+    return;
+  }
+  // 订阅额度：预置服务切换时自动填充 name/plan/mode/接口/字段路径
+  if (e.target?.dataset?.key === 'preset') {
+    const inst = getInstance(state.editingId);
+    const widget = inst && WIDGET_MAP[inst.type];
+    const preset = widget?.presets?.[e.target.value];
+    if (preset) {
+      $('drawer-body').querySelectorAll('[data-key]').forEach((f) => {
+        if (preset[f.dataset.key] !== undefined) {
+          if (f.type === 'checkbox') f.checked = !!preset[f.dataset.key];
+          else f.value = preset[f.dataset.key];
+        }
+      });
+      applyModeVisibility();
+    }
+    return;
+  }
   if (e.target?.dataset?.key !== 'platform') return;
   applyPlatformVisibility();
   const inst = getInstance(state.editingId);
@@ -430,7 +683,7 @@ $('drawer-body').addEventListener('change', (e) => {
 
 document.addEventListener('keydown', (e) => {
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
-  if (e.key === 'Escape') { if (state.mode === 'edit') setMode('view'); else { closeEditor(); closeLibrary(); } }
+  if (e.key === 'Escape') { if (state.mode === 'edit') setMode('view'); else { closeEditor(); closeLibrary(); closeSettings(); } }
   if (e.key === 'e' || e.key === 'E') setMode(state.mode === 'view' ? 'edit' : 'view');
 });
 

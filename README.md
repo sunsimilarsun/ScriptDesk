@@ -6,7 +6,7 @@
 
 - **双模式画布**：查看模式秒开读缓存；编辑模式支持拖拽排序、增删卡片、切换尺寸、配置参数。
 - **多实例**：同一组件可添加多张卡片，各自独立配置与缓存。
-- **内置组件（10 个）**：
+- **内置组件（11 个）**：
 
 | 组件 | 说明 |
 |---|---|
@@ -20,6 +20,7 @@
 | 🟩 GitHub 热力图 | 提交热力图、总提交 / 今日 / 连续天数 |
 | 💱 汇率行情 | Frankfurter 汇率 + Coinbase 加密行情 + Yahoo 指数 |
 | 🌐 网络状态 | 双路探测判定直连 / 分流代理 / 全局代理 / 离线 |
+| 🗓️ 订阅额度 | Codex / ChatGPT 套餐限额（5 小时 / 周窗口，自动捕获登录态） |
 
 ## 安装
 
@@ -32,9 +33,9 @@
 ## 目录结构
 
 ```
-SubInfo-Extension/
+ScriptDesk/
 ├── manifest.json          # MV3 清单
-├── background.js          # Service Worker 调度中心（按实例取数 + 缓存）
+├── background.js          # Service Worker 调度中心（按实例取数 + 缓存 + Codex token 捕获）
 ├── newtab.html/css/js     # 起始页（双模式画布）
 ├── popup.html/js          # 工具栏弹窗（订阅余量）
 ├── core/
@@ -42,6 +43,7 @@ SubInfo-Extension/
 │   ├── storage.js         # 多实例数据层
 │   ├── dnr-fetch.js       # 受限请求头（UA/Cookie/Referer）经 DNR 注入
 │   ├── cookie-sync.js     # 浏览器 Cookie 同步
+│   ├── config-io.js       # 配置导出 / 导入 / 脱敏
 │   └── rss-parser.js      # 纯正则 RSS/Atom 解析
 └── widgets/               # 各组件实现（协议见下）
 ```

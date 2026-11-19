@@ -457,7 +457,6 @@ export default {
     const feeBlock = `<div class="tc-fee ${lowFee ? 'low' : ''}">
         <div class="tc-fee-num">${data.fee ?? '--'}<small> 元</small></div>
         <div class="tc-fee-label">剩余话费 ${lowFee ? '· 偏低' : ''}</div>
-        <div class="tc-time">${rec?.updatedAt ? '更新 ' + new Date(rec.updatedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) : ''}</div>
       </div>`;
     const brandBar = `<i class="tc-brand" style="background:${brand}"></i>`;
     const flowRing = ring('flow', data.flow ?? '--', data.flowUnit || 'GB', data.flowPercent, '#2563eb', '#38bdf8', 78);

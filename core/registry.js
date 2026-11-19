@@ -9,8 +9,9 @@ import rss from '../widgets/rss.js';
 import githubHeatmap from '../widgets/github-heatmap.js';
 import market from '../widgets/market.js';
 import networkStatus from '../widgets/network-status.js';
+import subscription from '../widgets/subscription.js';
 
-export const WIDGETS = [subinfo, telecom, aiBalance, hotlist, genericJson, countdown, rss, githubHeatmap, market, networkStatus];
+export const WIDGETS = [subinfo, telecom, aiBalance, hotlist, genericJson, countdown, rss, githubHeatmap, market, networkStatus, subscription];
 
 // 按 type 建索引，后台按实例调度时用
 export const WIDGET_MAP = Object.fromEntries(WIDGETS.map((w) => [w.id, w]));

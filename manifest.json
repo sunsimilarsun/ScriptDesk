@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "ScriptDesk 小组件起始页",
-  "version": "2.4",
-  "description": "浏览器端 Scriptable 风格小组件起始页，双模式画布 + 话费三环 + RSS/GitHub/行情/网络状态",
-  "permissions": ["storage", "alarms", "declarativeNetRequest", "cookies"],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx9X7kYL1F+lXHy4EJQgzGL6EsETKVeL1bK4jGlOHT+xa4p41lbFZJ3RhV1Jk/YQqG+4k6TGWML99xQeWZrSMDv4ydx61KCblhtBgtO65T6xJ/jxP8OBHKAWG0iTGlt37yL72IlVptE5iJh0FOY9xbnf3Wc+B6zJ9nL9NldkaGen/RduhjgirhQqOngQcOeHX+idJbEfwhVhFrp4caE9EiZeonvEdMI14ihvE6TOsB4Z4ZCfX4c4zkFyIdWFyTa3xIPu4/0dyjx8nAsZYWXvelTuDFQwLGWJ6f4o/ger7oPWl1iBi3/vgc2Vk0MNd+33W6JcTLUtAcCqQ30mztu367QIDAQAB",
+  "version": "2.6.6",
+  "description": "浏览器端 Scriptable 风格小组件起始页，双模式画布 + 话费三环 + Codex 限额 + RSS/GitHub/行情/网络状态",
+  "permissions": ["storage", "alarms", "declarativeNetRequest", "cookies", "webRequest"],
   "host_permissions": ["<all_urls>"],
   "chrome_url_overrides": {
     "newtab": "newtab.html"

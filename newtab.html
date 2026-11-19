@@ -13,6 +13,7 @@
       <button id="btn-add" class="add-btn" title="添加小组件">＋ 添加组件</button>
       <button id="btn-refresh-all" title="刷新全部组件">↻ 刷新</button>
       <button id="btn-mode" title="切换编辑模式 (E)">✎ 编辑</button>
+      <button id="btn-settings" class="icon-btn" title="全局设置">⚙</button>
     </div>
   </div>
   <div class="edit-hint" id="edit-hint">编辑模式：拖动卡片排序 · 点击卡片编辑 · 按 Esc 或再按 E 完成</div>
@@ -40,6 +41,29 @@
       <button id="btn-close-library" class="icon-btn">✕</button>
     </div>
     <div class="drawer-body" id="library-body"></div>
+  </aside>
+
+  <!-- 全局设置抽屉（备份与恢复） -->
+  <aside class="drawer" id="settings" hidden>
+    <div class="drawer-head">
+      <h2>全局设置</h2>
+      <button id="btn-close-settings" class="icon-btn">✕</button>
+    </div>
+    <div class="drawer-body" id="settings-body">
+      <div class="cfg-section-title">备份与恢复</div>
+      <div class="cfg-field">
+        <div class="cfg-check">
+          <input type="checkbox" id="cfg-export-redact">
+          <span>导出时脱敏敏感凭据（API Key / 订阅链接 / Cookie）</span>
+        </div>
+      </div>
+      <div class="cfg-io-row">
+        <button id="btn-export-config" class="primary">导出配置 JSON</button>
+        <button id="btn-import-config">导入配置 JSON</button>
+        <input type="file" id="cfg-import-file" accept=".json,application/json" hidden>
+      </div>
+      <div class="cfg-io-hint" id="cfg-io-hint">导出仅包含组件布局与设置，不含缓存数据；导入会覆盖当前布局并刷新。</div>
+    </div>
   </aside>
 
   <script type="module" src="newtab.js"></script>

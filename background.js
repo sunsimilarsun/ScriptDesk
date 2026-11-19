@@ -94,3 +94,46 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
     return true;
   }
 });
+
+// ---------- Codex token 自动捕获 ----------
+// ChatGPT 网页的 Codex 面板会调用 wham/usage，其请求头带现成的 OAuth token。
+// 这里拦截该请求，把 Authorization Bearer token + account_id 写入 storage，
+// 使「订阅额度」卡无需 codex login / 手动导入 auth.json 也能自动拿到登录态。
+function extractCodexAuth(details) {
+  try {
+    const authHeader = details.requestHeaders?.find(
+      (h) => h.name.toLowerCase() === 'authorization'
+    )?.value || '';
+    if (!authHeader.startsWith('Bearer ')) return;
+    const token = authHeader.slice(7).trim();
+    if (!token) return;
+
+    const acctHeader = details.requestHeaders?.find(
+      (h) => h.name.toLowerCase() === 'chatgpt-account-id'
+    )?.value || '';
+
+    // 解析 JWT payload 里的 chatgpt_account_id（兜底 account_id 头缺失时）
+    let accountId = acctHeader;
+    if (!accountId) {
+      try {
+        const seg = token.split('.')[1];
+        const json = atob(seg.replace(/-/g, '+').replace(/_/g, '/'));
+        const payload = JSON.parse(json);
+        accountId = payload['https://api.openai.com/auth']?.chatgpt_account_id || '';
+      } catch (_) { /* 忽略解析失败 */ }
+    }
+
+    const record = { access_token: token, account_id: accountId, savedAt: Date.now(), source: 'webRequest' };
+    chrome.storage.local.set({ codexAuth: record }).then(() => {
+      // 捕获到新 token 后，若存在订阅额度卡，立刻强制刷新一次让它用上
+      refreshAll(true);
+    });
+  } catch (_) { /* 静默：捕获失败不影响其它组件 */ }
+}
+
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  extractCodexAuth,
+  { urls: ['*://chatgpt.com/backend-api/wham/usage*'] },
+  ['requestHeaders']
+);
+
