@@ -9,7 +9,7 @@ const ICONS = { subinfo: '📶', telecom: '📱', 'ai-balance': '🤖', hotlist:
 const DESCS = {
   subinfo: '订阅流量与到期',
   telecom: '话费 / 流量 / 语音三环',
-  'ai-balance': 'DeepSeek / 硅基流动 / OpenRouter / MoeRouter 等余额与日耗',
+  'ai-balance': 'DeepSeek / 硅基流动 / OpenRouter / MoeRouter / WorkBuddy 等余额与日耗',
   hotlist: 'V2EX / Hacker News',
   'generic-json': '任意 API 取值',
   countdown: '倒数日与快捷入口',
@@ -545,9 +545,10 @@ $('drawer-body').addEventListener('click', async (e) => {
     if (tokenBtn.dataset.tokenAction === 'login-carrier') {
       const carrier = tokenBtn.dataset.carrier || 'moerouter';
       try {
-        const { getLoginUrl } = await import('./core/cookie-sync.js');
+        const { getLoginUrl, CARRIERS } = await import('./core/cookie-sync.js');
         window.open(getLoginUrl(carrier), '_blank', 'noopener');
-        if (hint) { hint.textContent = '登录完成后回到 moerouter.com 任一页面，令牌会被自动捕获并填入（点「测试连接」验证）'; hint.className = 'cookie-hint'; }
+        const name = CARRIERS[carrier]?.name || '官网';
+        if (hint) { hint.textContent = `登录完成后回到 ${name} 任一页面，令牌会被自动捕获并填入（点「测试连接」验证）`; hint.className = 'cookie-hint'; }
       } catch (err) {
         if (hint) { hint.textContent = `打开失败：${err.message}`; hint.className = 'cookie-hint'; }
       }

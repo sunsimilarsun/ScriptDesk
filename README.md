@@ -12,15 +12,15 @@
 |---|---|
 | 📶 订阅余量 | 解析 `subscription-userinfo`，显示剩余流量与到期 |
 | 📱 话费三环 | 联通话费 / 流量 / 语音（含余量查询页接口） |
-| 🤖 AI 余额 | DeepSeek / 硅基流动 / OpenRouter / New API / MoeRouter / OpenAI / Anthropic 余额与日耗 |
+| 🤖 AI 余额 | DeepSeek / 硅基流动 / OpenRouter / New API / MoeRouter / WorkBuddy / OpenAI / Anthropic 余额与日耗 |
 | 🔥 热榜 | V2EX / Hacker News |
 | 🔢 任意 API | 通用 JSON 取值 |
 | ⏳ 倒数日 | 倒数日与快捷入口 |
 | 📰 RSS 订阅 | 多源 RSS / Atom 聚合，纯正则解析，点击打开原文 |
 | 🟩 GitHub 热力图 | 提交热力图、总提交 / 今日 / 连续天数 |
-| 💱 汇率行情 | Frankfurter 汇率 + Coinbase 加密行情 + Yahoo 指数 |
-| 🌐 网络状态 | 双路探测判定直连 / 分流代理 / 全局代理 / 离线 |
-| 🗓️ 订阅额度 | Codex / ChatGPT 套餐限额（5 小时 / 周窗口，自动捕获登录态） |
+| 💱 汇率行情 | Frankfurter 汇率 + Coinbase 加密行情 + Yahoo 指数 + 近 14 天折线图 |
+| 🌐 网络状态 | 双路探测判定直连 / 分流代理 / 全局代理 / 离线 + IP 纯净度 |
+| 🗓️ 订阅额度 | Codex / ChatGPT 套餐限额（5 小时 / 周窗口 + 会员等级与到期） |
 
 ## 安装
 

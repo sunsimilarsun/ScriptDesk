@@ -32,6 +32,27 @@ async function fetchFx(symbol, ctx) {
   return { kind: 'FX', symbol, label: `${base}/${target}`, price, pct: null, change: null };
 }
 
+// Frankfurter 历史时间序列：近 N 天 daily 汇率，供折线图
+async function fetchFxHistory(symbol, days, ctx) {
+  const [base, target] = symbol.split('/');
+  if (!base || !target) return null;
+  const end = new Date();
+  const start = new Date(Date.now() - (days - 1) * 86400000);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const url = `https://api.frankfurter.dev/v1/${fmt(start)}..${fmt(end)}?base=${encodeURIComponent(base)}&symbols=${encodeURIComponent(target)}`;
+  try {
+    const res = await ctx.netFetch(url, { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const rates = json?.rates;
+    if (!rates || typeof rates !== 'object') return null;
+    const dates = Object.keys(rates).sort();
+    return dates.map((d) => ({ date: d, value: num(rates[d]?.[target]) })).filter((p) => p.value > 0);
+  } catch (_) {
+    return null;
+  }
+}
+
 // Coinbase 现货：/products/{PAIR}/stats 返回 open/last/high/low
 async function fetchCrypto(symbol, ctx) {
   const pair = symbol.replace('/', '-'); // BTC/USD -> BTC-USD
@@ -47,6 +68,32 @@ async function fetchCrypto(symbol, ctx) {
   return { kind: 'CRYPTO', symbol, label: pair, price: last, pct, change, base: json.base_currency || '' };
 }
 
+// 折线图（纯 SVG）：近 N 天走势，红涨绿跌（可切绿涨红跌）
+function sparkLine(points, instanceId, redUp, currency = '') {  if (!points || points.length < 2) return '';
+  const id = String(instanceId || 'x').replace(/[^a-zA-Z0-9_-]/g, '');
+  const W = 300, H = 70, pad = 8;
+  const vals = points.map((p) => num(p.value));
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const span = max - min || 1;
+  const n = vals.length;
+  const stepX = (W - pad * 2) / (n - 1);
+  const yOf = (v) => H - pad - ((v - min) / span) * (H - pad * 2);
+  const coords = vals.map((v, i) => [pad + i * stepX, yOf(v)]);
+  const line = coords.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  const area = `${line} L${coords[coords.length - 1][0].toFixed(1)},${H - pad} L${coords[0][0].toFixed(1)},${H - pad} Z`;
+  const first = vals[0], last = vals[vals.length - 1];
+  const up = last >= first;
+  const col = up ? (redUp ? '#ef4444' : '#22c55e') : (redUp ? '#22c55e' : '#ef4444');
+  const lastX = coords[coords.length - 1][0], lastY = coords[coords.length - 1][1];
+  return `<svg class="mk-spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-label="近${n}天走势">
+    <defs><linearGradient id="mk-g-${id}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${col}" stop-opacity="0.25"/><stop offset="100%" stop-color="${col}" stop-opacity="0"/>
+    </linearGradient></defs>
+    <path d="${area}" fill="url(#mk-g-${id})"/>
+    <path d="${line}" fill="none" stroke="${col}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="2.4" fill="${col}"/>
+  </svg>`;
+}
 // Yahoo Finance v8 指数（可选）
 async function fetchIndex(symbol, ctx) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=1d&interval=1d`;
@@ -93,7 +140,14 @@ export default {
         }
       })
     );
-    return { rows, colorMode: config.colorMode || 'red-up' };
+    // 折线图：取第一个 FX 标的的近 14 天走势（若无 FX 则取第一个 CRYPTO 跳过——法币历史用 Frankfurter）
+    const firstFx = symbols.find((s) => s.kind === 'FX');
+    let spark = null;
+    if (firstFx) {
+      const hist = await fetchFxHistory(firstFx.symbol, 14, ctx);
+      if (hist && hist.length >= 2) spark = { label: `${firstFx.symbol}`, points: hist };
+    }
+    return { rows, colorMode: config.colorMode || 'red-up', spark };
   },
 
   render(data, config, inst) {
@@ -119,7 +173,11 @@ export default {
       <span class="w-title">${esc(inst?.title || '汇率行情')}</span>
       <span class="w-badge">${data.rows?.length ?? 0} 项</span>
     </div>
-    <div class="mk-list">${rows || '<div class="w-empty">无数据</div>'}</div>`;
+    <div class="mk-list">${rows || '<div class="w-empty">无数据</div>'}</div>
+    ${data.spark ? `<div class="mk-spark-wrap">
+        <div class="mk-spark-head">${esc(data.spark.label)} · 近 14 天</div>
+        ${sparkLine(data.spark.points, inst?.instanceId, redUp)}
+      </div>` : ''}`;
   },
 
   renderSmall(data, config, inst) {

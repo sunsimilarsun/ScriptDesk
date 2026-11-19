@@ -110,6 +110,62 @@ function parseIpwhois(json) {
   };
 }
 
+// ---------- IP 纯净度 ----------
+// 用 ip-api.com（http，免费无需 key）的 proxy/hosting/mobile 三字段判定纯净度；
+// 数据中心 / 代理 / VPN 出口纯净度低，住宅 / 移动网络高。
+const DC_HINTS = /(LLC|Corp|Inc\.|Hosting|Cloud|Datacenter|Data Center|DataCentre|VPS|Server|Telecom|Network|Internet|Backbone|Broadband|VPN|Proxy|GmbH|Ltd\.|S\.A\.|B\.V\.|SAS|Digital|Technologies?|Solutions|Infrastructure)/i;
+
+async function fetchIpPurity(ip) {
+  if (!ip || isIPv6(ip)) return null; // ip-api 对 IPv6 支持有限，且纯 IPv6 不做机房判定
+  // 优先 ip-api.com（http 免费版含 proxy/hosting/mobile）；扩展后台 fetch 可发 http
+  try {
+    const res = await fetchWithTimeout(
+      `http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,query,proxy,hosting,mobile`,
+      { 'Accept': 'application/json' }, 4000
+    );
+    if (res.ok) {
+      const json = await res.json();
+      if (json?.status === 'success') {
+        return scorePurity({
+          proxy: !!json.proxy, hosting: !!json.hosting, mobile: !!json.mobile,
+          source: 'ip-api'
+        });
+      }
+    }
+  } catch (_) { /* 降级到启发式 */ }
+  // 降级：ipwho.is 的 org/domain 机房特征启发式
+  try {
+    const res = await fetchWithTimeout(`https://ipwho.is/${encodeURIComponent(ip)}`, { 'Accept': 'application/json' }, 4000);
+    if (res.ok) {
+      const json = await res.json();
+      const org = json?.connection?.org || json?.connection?.isp || '';
+      const domain = json?.connection?.domain || '';
+      const dc = DC_HINTS.test(`${org} ${domain}`);
+      return scorePurity({ proxy: false, hosting: dc, mobile: false, source: 'ipwho.is', org });
+    }
+  } catch (_) { /* 忽略 */ }
+  return null;
+}
+
+// 由 proxy/hosting/mobile 信号计算纯净度等级与文案
+function scorePurity({ proxy, hosting, mobile, source, org }) {
+  let level, label, cls, desc;
+  if (mobile) {
+    level = 5; label = '移动网络'; cls = 'ok';
+    desc = '移动蜂窝出口，纯净度高';
+  } else if (proxy || hosting) {
+    level = 2; label = '数据中心 / 代理'; cls = 'warn';
+    desc = (proxy ? '代理 ' : '') + (hosting ? '机房 ' : '') + '出口，纯净度低';
+  } else {
+    level = 4; label = '住宅 / 直连'; cls = 'ok';
+    desc = '普通住宅宽带出口，纯净度较高';
+  }
+  if (source === 'ipwho.is' && org) {
+    desc += ` · ${org}`;
+  }
+  return { level, label, cls, desc, proxy: !!proxy, hosting: !!hosting, mobile: !!mobile, source };
+}
+
 // 从单个端点解析出口信息；成功返回 {ip,countryCode,country,region}，失败抛错
 async function resolveFrom(url, parseFn, headers = {}) {
   const res = await fetchWithTimeout(url, headers);
@@ -227,6 +283,14 @@ export default {
     overseas.ok = oOk;
     overseas.latency = oRtt;
 
+    // 两路出口 IP 纯净度并行查询（失败不影响主状态）
+    const [dPurityP, oPurityP] = await Promise.allSettled([
+      fetchIpPurity(dIp.ip),
+      fetchIpPurity(oIp.ip)
+    ]);
+    domestic.purity = dPurityP.status === 'fulfilled' ? dPurityP.value : null;
+    overseas.purity = oPurityP.status === 'fulfilled' ? oPurityP.value : null;
+
     const cls = classify(domestic, overseas);
     const proxyMode = proxyModeP.status === 'fulfilled' ? proxyModeP.value : null;
 
@@ -246,12 +310,17 @@ export default {
     const fmtIp = (ip) => isIPv6(ip) ? shortenIpv6(ip) : ip;
     const col = (side, title) => {
       const s = data[side] || {};
+      const purity = s.purity;
+      const purityTag = purity
+        ? `<div class="ns-purity ${purity.cls}" title="${esc(purity.desc || '')}">${esc(purity.label || '')}</div>`
+        : '';
       return `<div class="ns-col">
         <div class="ns-col-title">${esc(title)}</div>
         <div class="ns-col-flag">${esc(s.flag || '🌐')}</div>
         <div class="ns-col-name">${esc(s.name || '未知')}${s.region ? `<span class="ns-col-region">${esc(s.region)}</span>` : ''}</div>
         <div class="ns-ip" data-ip="${esc(s.ip || '')}" title="${esc(s.ip ? '点击复制 ' + s.ip : '')}">${esc(fmtIp(s.ip) || '—')}</div>
         <div class="ns-col-rtt">${lat(s.latency)}</div>
+        ${purityTag}
       </div>`;
     };
     return `<div class="w-head">
@@ -282,6 +351,10 @@ export default {
     const main = data.status === 'split' || data.status === 'global' ? data.overseas : data.domestic;
     const m = main || {};
     const fmtIp = (ip) => isIPv6(ip) ? shortenIpv6(ip) : ip;
+    const purity = m.purity;
+    const purityTag = purity
+      ? `<div class="ns-purity ${purity.cls}" title="${esc(purity.desc || '')}">纯净度 · ${esc(purity.label || '')}</div>`
+      : '';
     return `<div class="w-head"><span class="w-title">${esc(inst?.title || '网络状态')}</span>
       <span class="w-badge ${statusClass}">${esc(data.label || '')}</span></div>
       <div class="ns-small">
@@ -291,6 +364,7 @@ export default {
           <span class="ns-small-name">${esc(m.name || '未知')}</span>
         </div>
         <div class="ns-ip ns-ip-mono" data-ip="${esc(m.ip || '')}" title="${esc(m.ip ? '点击复制 ' + m.ip : '')}">${esc(fmtIp(m.ip) || '—')}</div>
+        ${purityTag}
         <div class="ns-small-lat">国内 ${lat(data.domestic?.latency)} · 海外 ${lat(data.overseas?.latency)}</div>
         <button class="ns-probe" data-action="reprobe">重新探测</button>
       </div>`;

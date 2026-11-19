@@ -296,6 +296,11 @@ body[data-mode="edit"] .widget-card::after {
 .mk-small-sym { font-size: 12px; color: var(--text-sub); }
 .mk-small-price { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
+/* 折线图 */
+.mk-spark-wrap { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--track); }
+.mk-spark-head { font-size: 11px; color: var(--text-sub); margin-bottom: 4px; }
+.mk-spark { display: block; width: 100%; height: 70px; }
+
 /* 网络状态 */
 .ns-body { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 8px; }
 .ns-status { display: flex; align-items: center; gap: 10px; }
@@ -326,6 +331,11 @@ body[data-mode="edit"] .widget-card::after {
 .ns-col-name { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .ns-col-region { font-size: 10px; color: var(--text-sub); font-weight: 400; margin-left: 4px; }
 .ns-col-rtt { font-size: 11px; color: var(--text-sub); font-variant-numeric: tabular-nums; }
+
+/* IP 纯净度标签 */
+.ns-purity { font-size: 10px; line-height: 1; padding: 2px 6px; border-radius: 6px; margin-top: 2px; white-space: nowrap; }
+.ns-purity.ok { color: #22c55e; background: rgba(34, 197, 94, 0.12); }
+.ns-purity.warn { color: #f59e0b; background: rgba(245, 158, 11, 0.12); }
 
 /* 出口 IP：等宽字体，超长 IPv6 省略 + 悬浮完整，查看模式点击复制 */
 .ns-ip { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; color: var(--text); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -369,4 +379,9 @@ body[data-mode="view"] .ns-ip[data-ip]:not([data-ip=""]):hover { color: var(--ac
 .sb-win-pct.low { color: var(--warn); }
 .sb-win .w-progress { margin: 4px 0 0; }
 .sb-win .w-progress i.warn { background: var(--warn); }
+
+/* 会员等级 badge 与到期行 */
+.sb-plan-badge { background: rgba(139,92,246,.14); color: #a78bfa; }
+.sb-expiry { font-size: 11px; color: var(--text-sub); margin-top: 4px; font-variant-numeric: tabular-nums; }
+.sb-expiry.expired { color: var(--warn); }
 

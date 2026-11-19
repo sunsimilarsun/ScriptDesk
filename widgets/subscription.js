@@ -98,7 +98,52 @@ async function fetchCodex(config, ctx) {
   if (!windows) {
     throw new Error('接口未返回 rate_limit 用量数据（可能账号无套餐限额）');
   }
-  return { json, windows };
+
+  // 会员等级与到期：并行取 /backend-api/me（entitlement 含 expires_at / subscription_plan）
+  const plan = await fetchPlan(headers, auth, ctx);
+
+  return { json, windows, plan };
+}
+
+// 会员等级 + 到期：优先 /backend-api/me 的 entitlement，兜底从 JWT 解析 chatgpt_plan_type
+async function fetchPlan(headers, auth, ctx) {
+  // 1) JWT 兜底等级（零额外请求）
+  let jwtPlan = '';
+  try {
+    const seg = String(auth.access_token || '').split('.')[1];
+    const payload = JSON.parse(atob(seg.replace(/-/g, '+').replace(/_/g, '/')));
+    jwtPlan = (payload['https://api.openai.com/auth']?.chatgpt_plan_type) || '';
+  } catch (_) { /* 忽略 */ }
+
+  // 2) /backend-api/me 拿权威 entitlement
+  let mePlan = '', expiresAt = null, willRenew = null;
+  try {
+    const me = await reqJson(ctx, 'https://chatgpt.com/backend-api/me', headers);
+    const ent = me?.entitlement || {};
+    const planType = me?.account?.plan_type || ent?.subscription_plan || '';
+    mePlan = normalizePlan(planType);
+    // expires_at 可能是秒级（<1e12）或毫秒级时间戳
+    if (ent?.expires_at) {
+      let t = num(ent.expires_at);
+      if (t > 0) { if (t < 1e12) t *= 1000; expiresAt = t; }
+    }
+    willRenew = ent?.has_active_subscription != null ? !!ent.has_active_subscription : null;
+  } catch (_) { /* me 接口失败则仅用 JWT 等级 */ }
+
+  const plan = normalizePlan(mePlan || jwtPlan);
+  return { plan, planRaw: mePlan || jwtPlan, expiresAt, willRenew };
+}
+
+// 归一化会员等级名（free/plus/pro/team/enterprise → 中文展示）
+function normalizePlan(p) {
+  const s = String(p || '').toLowerCase();
+  if (!s || s === 'free') return 'Free';
+  if (s === 'plus') return 'Plus';
+  if (s === 'pro') return 'Pro';
+  if (s === 'team') return 'Team';
+  if (s === 'enterprise' || s === 'business') return 'Enterprise';
+  // 其它值（如 "chatgptpro"）保留原样但首字母大写
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 // ---------- 渲染 ----------
@@ -117,11 +162,27 @@ function renderWindows(data, inst) {
       ${bar}
     </div>`;
   }).join('');
+
+  // 会员等级 + 到期：右上角 badge 显示等级，标题下显示到期倒计时/日期
+  const planInfo = data.planInfo || {};
+  const planName = planInfo.plan || (typeof data.plan === 'string' ? data.plan : '') || 'Codex';
+  const planBadge = `<span class="w-badge sb-plan-badge">${esc(planName)}</span>`;
+  let expiryLine = '';
+  if (planInfo.expiresAt) {
+    const diffMs = planInfo.expiresAt - Date.now();
+    const expired = diffMs <= 0;
+    const dateStr = new Date(planInfo.expiresAt).toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    expiryLine = `<div class="sb-expiry ${expired ? 'expired' : ''}">
+      ${expired ? '已于 ' + esc(dateStr) + ' 到期' : '到期 ' + esc(dateStr) + '（' + fmtCountdown(diffMs) + '）'}
+    </div>`;
+  }
+
   return `
     <div class="w-head">
       <span class="w-title">${esc(inst?.title || data.name)}</span>
-      <span class="w-badge ${data.warn ? 'warn' : ''}">${esc(data.plan || 'Codex')}</span>
+      ${planBadge}
     </div>
+    ${expiryLine}
     <div class="sb-win-list">${rows}</div>`;
 }
 
@@ -145,13 +206,13 @@ export default {
     const name = (config.name || '').trim() || 'Codex';
     const plan = (config.plan || '').trim();
 
-    const { windows } = await fetchCodex(config, ctx);
+    const { windows, plan: planInfo } = await fetchCodex(config, ctx);
 
     // 预警：任一窗口剩余 <= 预警线即整体标红
     const warnLine = num(config.warnPercent || 20);
     const warn = windows.some((w) => w.remainPct !== null && w.remainPct <= warnLine);
 
-    return { name, plan, windows, warn };
+    return { name, plan: plan || '', planInfo, windows, warn };
   },
 
   renderSmall(data, config, inst) {

@@ -192,3 +192,38 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
   ['requestHeaders']
 );
 
+// ---------- WorkBuddy token 自动捕获 ----------
+// WorkBuddy 网页（workbuddy.cn）登录后会调 billing/meter/get-user-resource-summary 等接口，
+// 请求头带 Authorization: Bearer <accessToken> + X-Account-Uid。拦截并写入 storage，
+// 使「AI 余额 · WorkBuddy」卡无需手动粘贴。同样去重 + 精准刷新。
+let _lastWorkbuddyToken = null;
+
+function extractWorkbuddyAuth(details) {
+  try {
+    const authHeader = details.requestHeaders?.find(
+      (h) => h.name.toLowerCase() === 'authorization'
+    )?.value || '';
+    if (!authHeader.startsWith('Bearer ')) return;
+    const token = authHeader.slice(7).trim();
+    if (!token) return;
+    const uid = details.requestHeaders?.find(
+      (h) => h.name.toLowerCase() === 'x-account-uid'
+    )?.value || '';
+    if (!uid) return;
+    if (token === _lastWorkbuddyToken) return;
+
+    _lastWorkbuddyToken = token;
+    chrome.storage.local.set({
+      workbuddyAuth: { access_token: token, uid, savedAt: Date.now(), source: 'webRequest' }
+    }).then(() => {
+      refreshTypeOnly('ai-balance');
+    });
+  } catch (_) { /* 静默 */ }
+}
+
+chrome.webRequest.onBeforeSendHeaders.addListener(
+  extractWorkbuddyAuth,
+  { urls: ['*://www.workbuddy.cn/billing/*', '*://workbuddy.cn/billing/*', '*://copilot.tencent.com/v2/billing/*'] },
+  ['requestHeaders']
+);
+

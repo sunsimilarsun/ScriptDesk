@@ -25,10 +25,10 @@ const daysBetween = (a, b) => Math.round((parseDay(b) - parseDay(a)) / 86400000)
 // 由 response 拉 JSON；连通性检查：网络异常 / 非 2xx / 非 JSON 都给出明确原因，
 // 避免错误响应体被当成正常数据解析出余额 0。
 const snippet = (s, n = 80) => String(s || '').replace(/\s+/g, ' ').slice(0, n);
-async function req(ctx, url, headers) {
+async function req(ctx, url, headers, method = 'GET', body = undefined) {
   let res;
   try {
-    res = await ctx.netFetch(url, { headers });
+    res = await ctx.netFetch(url, { method, headers, body });
   } catch (e) {
     throw new Error(`无法连接接口：${e.message}`);
   }
@@ -335,6 +335,61 @@ const PLATFORMS = {
         ]
       };
     }
+  },
+
+  // WorkBuddy（腾讯 AI 编程助手）：余额 = 积分（Credits）。
+  // 接口 POST /billing/meter/get-user-resource-summary，鉴权 Bearer accessToken + X-Account-Uid。
+  // accessToken 在桌面端本地是加密存储，无法直接读文件；走 webRequest 自动捕获（网页登录后自动抓）。
+  workbuddy: {
+    name: 'WorkBuddy',
+    consoleUrl: 'https://www.workbuddy.cn',
+    needsKey: false, // 走登录态 accessToken，非 API Key
+    async fetch(config, ctx) {
+      // 令牌两级降级：手动填的 workbuddyToken → storage 自动捕获的 workbuddyAuth
+      let token = (config.workbuddyToken || '').trim();
+      let uid = (config.workbuddyUid || '').trim();
+      if (!token || !uid) {
+        try {
+          const got = await chrome.storage.local.get(['workbuddyAuth']);
+          token = token || got.workbuddyAuth?.access_token || '';
+          uid = uid || got.workbuddyAuth?.uid || '';
+        } catch (_) { /* 忽略 */ }
+      }
+      if (!token || !uid) {
+        throw new Error('未获取 WorkBuddy 登录态：请打开 workbuddy.cn 登录一次（自动捕获令牌），或手动粘贴 accessToken 与 UID');
+      }
+      const json = await req(ctx, 'https://www.workbuddy.cn/billing/meter/get-user-resource-summary', {
+        'Authorization': `Bearer ${token}`,
+        'X-Account-Uid': uid,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      }, 'POST', '{}');
+      const d = json?.data || json;
+      const totalCredits = d.TotalCredits ?? d.totalCredits ?? d.total_credits;
+      if (totalCredits === undefined) {
+        throw new Error('响应缺少 TotalCredits 字段，请确认登录态有效或接口结构');
+      }
+      // CreditGroups：plan_base / plan_bonus / addon / benefit 四类积分，逐类显示剩余
+      const groups = Array.isArray(d.CreditGroups) ? d.CreditGroups : [];
+      const groupLabel = { plan_base: '套餐基础', plan_bonus: '套餐赠送', addon: '加量包', benefit: '平台奖励' };
+      const extra = [
+        { label: '剩余积分', value: `${round2(totalCredits)}` }
+      ];
+      for (const g of groups) {
+        const kind = g?.Kind || g?.kind || '';
+        const remain = num(g?.RemainCredits ?? g?.remainCredits ?? g?.remain ?? g?.Remain);
+        const label = groupLabel[kind] || kind || '积分';
+        extra.push({ label, value: `${round2(remain)}` });
+      }
+      // 套餐名（若有）
+      const planName = d.PlanName ?? d.planName ?? '';
+      return {
+        currency: '', primaryValue: round2(totalCredits), primaryLabel: '积分', balance: num(totalCredits), isSpendType: false,
+        totalQuota: undefined,
+        planName,
+        extra: extra.slice(0, 5) // 最多展示 5 行明细
+      };
+    }
   }
 };
 
@@ -447,6 +502,7 @@ export default {
       { value: 'openrouter', label: 'OpenRouter' },
       { value: 'newapi', label: 'New API / 自建中转' },
       { value: 'moerouter', label: 'MoeRouter 中转站' },
+      { value: 'workbuddy', label: 'WorkBuddy 积分' },
       { value: 'openai-admin', label: 'OpenAI Admin' },
       { value: 'anthropic-admin', label: 'Anthropic Admin' }
     ] },
@@ -454,6 +510,8 @@ export default {
     { key: 'accessToken', label: '访问令牌（MoeRouter 用，nap_ 开头）', type: 'password', platforms: ['moerouter'], carrier: 'moerouter', testable: true, placeholder: 'nap_...（登录后自动捕获，或手动粘贴）' },
     { key: 'quotaPerUnit', label: '额度换算单位（quota 每单位对应美元）', type: 'number', platforms: ['moerouter'], default: 500000 },
     { key: 'exchangeRate', label: '美元兑人民币汇率', type: 'number', platforms: ['moerouter'], default: 7.3 },
+    { key: 'workbuddyUid', label: '账户 UID（WorkBuddy 用）', type: 'text', platforms: ['workbuddy'], placeholder: '32ee4e68-...（登录后自动捕获）' },
+    { key: 'workbuddyToken', label: '访问令牌（WorkBuddy 用）', type: 'password', platforms: ['workbuddy'], carrier: 'workbuddy', testable: true, placeholder: '登录 workbuddy.cn 后自动捕获，或手动粘贴' },
     { key: 'sfMode', label: '硅基流动取数方式', type: 'select', default: 'web', platforms: ['siliconflow'], options: [
       { value: 'web', label: '国内站 · 控制台登录态（默认，API 已下线）' },
       { value: 'api', label: '国际站 · API Key（api.siliconflow.com）' }
@@ -515,8 +573,8 @@ export default {
         <span class="w-title">${esc(inst?.title || data.platformName || 'AI 余额')}</span>
         <span class="w-badge ${low ? 'warn' : ''}">${esc(data.platformName || 'AI')}</span>
       </div>
-      <div class="ab-big ${low ? 'low' : ''}">${esc(data.currency || '¥')}${esc(data.overdue ? Math.abs(num(data.primaryValue)) : (data.primaryValue ?? '--'))}<small> ${esc(data.primaryLabel || '')}</small></div>
-      <div class="ab-foot"><span>今日消耗</span><b>${esc(data.currency || '¥')}${esc(data.todaySpend ?? 0)}</b></div>
+      <div class="ab-big ${low ? 'low' : ''}">${data.currency ? esc(data.currency) : ''}${esc(data.overdue ? Math.abs(num(data.primaryValue)) : (data.primaryValue ?? '--'))}<small> ${esc(data.primaryLabel || '')}</small></div>
+      <div class="ab-foot"><span>今日消耗</span><b>${data.currency ? esc(data.currency) : ''}${esc(data.todaySpend ?? 0)}</b></div>
       ${data.recharged ? '<div class="ab-tag">今日已充值 · 基线已重置</div>' : ''}`;
   },
 
@@ -525,7 +583,7 @@ export default {
     const low = data.isSpendType
       ? num(data.primaryValue) > num(data.warnBalance)
       : num(data.primaryValue) < num(data.warnBalance);
-    const cur = data.currency || '¥';
+    const cur = data.currency || ''; // 空 currency（如 WorkBuddy 积分）不显示货币符号
     const details = (data.extra || []).map((e) =>
       `<div class="ab-detail"><span>${esc(e.label)}</span><b>${esc(e.value)}</b></div>`).join('');
     const id = String(inst?.instanceId || 'x').replace(/[^a-zA-Z0-9_-]/g, '');
@@ -536,15 +594,15 @@ export default {
       </div>
       <div class="ab-medium">
         <div class="ab-left">
-          <div class="ab-big ${low ? 'low' : ''}">${cur}${esc(data.overdue ? Math.abs(num(data.primaryValue)) : (data.primaryValue ?? '--'))}<small> ${esc(data.primaryLabel || '')}</small></div>
+          <div class="ab-big ${low ? 'low' : ''}">${esc(cur)}${esc(data.overdue ? Math.abs(num(data.primaryValue)) : (data.primaryValue ?? '--'))}<small> ${esc(data.primaryLabel || '')}</small></div>
           <div class="ab-details">
             ${details}
-            <div class="ab-detail"><span>今日消耗</span><b class="ab-today">${cur}${esc(data.todaySpend ?? 0)}</b></div>
+            <div class="ab-detail"><span>今日消耗</span><b class="ab-today">${esc(cur)}${esc(data.todaySpend ?? 0)}</b></div>
           </div>
           ${data.recharged ? '<div class="ab-tag">今日已充值 · 基线已重置</div>' : ''}
         </div>
         <div class="ab-chart">
-          <div class="ab-chart-title">近 7 天消耗（${cur}）</div>
+          <div class="ab-chart-title">近 7 天消耗${cur ? `（${esc(cur)}）` : ''}</div>
           ${barChart(data.trend || [], id)}
         </div>
       </div>`;

@@ -60,6 +60,19 @@ export const CARRIERS = {
     loginUrl: 'https://moerouter.com/sign-in',
     ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     referer: 'https://moerouter.com/'
+  },
+  // WorkBuddy（腾讯 AI 编程助手）：积分余额接口 billing/meter/get-user-resource-summary，
+  // 登录态靠 workbuddy.cn 域，accessToken 由 webRequest 自动捕获
+  workbuddy: {
+    name: 'WorkBuddy',
+    domains: ['workbuddy.cn'],
+    urls: [
+      'https://www.workbuddy.cn/',
+      'https://workbuddy.cn/'
+    ],
+    loginUrl: 'https://www.workbuddy.cn/',
+    ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    referer: 'https://www.workbuddy.cn/'
   }
 };
 
