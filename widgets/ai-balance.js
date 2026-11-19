@@ -383,30 +383,47 @@ const PLATFORMS = {
 // 因此取数顺序改为：
 //  1) Cookie 会话（chrome.cookies 读 HttpOnly Cookie + 浏览器真实 UA）—— 主路径
 //  2) 手动/捕获的 Bearer accessToken + uid —— 兜底（桌面端 token 场景）
+// 构造与浏览器登录时一致的「reduced User-Agent」。
+// Chrome 从 107 起对第三方站点默认发送 reduced UA（Chrome/<major>.0.0.0），
+// WorkBuddy 会话正是按这个 reduced UA 绑定；扩展里 navigator.userAgent 返回的却是完整版
+// （Chrome/<major>.0.<minor>.<patch>），两者不一致会导致服务端回 401。
+// 因此这里把 UA 归一化成 reduced 格式，并生成「当前版本 / 上一大版本」两个候选用于重试。
+function buildWorkbuddyUAs() {
+  const uaRaw = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
+  const m = uaRaw.match(/Chrome\/(\d+)\./);
+  const major = m ? parseInt(m[1], 10) : 157;
+  const toReduced = (ver) => uaRaw
+    ? uaRaw.replace(/Chrome\/[\d.]+/, `Chrome/${ver}.0.0.0`)
+    : `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${ver}.0.0.0 Safari/537.36`;
+  return [toReduced(major), toReduced(major - 1)];
+}
+
 async function fetchWorkbuddyResource(config, ctx) {
   const url = 'https://www.workbuddy.cn/billing/meter/get-user-resource-summary';
-  // 浏览器真实 UA（含准确 Chrome 大版本），避免硬编码导致 401；取不到时退回当前 UA 字符串
-  const ua = (typeof navigator !== 'undefined' && navigator.userAgent)
-    || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36';
 
-  // 路径 1：Cookie 会话（网页端真实鉴权方式）
+  // 路径 1：Cookie 会话（网页端真实鉴权方式），reduced UA 双候选重试
   const { cookieStr, names } = await readWorkbuddyCookie();
   let cookieErr = '';
   if (cookieStr) {
-    try {
-      const json = await req(ctx, url, {
-        'Cookie': cookieStr,
-        'x-client-platform': 'web',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'Referer': 'https://www.workbuddy.cn/profile/plans-usage',
-        'Origin': 'https://www.workbuddy.cn',
-        'User-Agent': ua
-      }, 'POST', '{}');
-      return json?.data || json;
-    } catch (err) {
-      cookieErr = `${err.message}（已带 ${names.length} 个 Cookie：${names.slice(0, 6).join(', ')}${names.length > 6 ? '…' : ''}）`;
-      console.warn('[workbuddy] Cookie 会话失败，尝试 Bearer token：', err.message);
+    const uas = buildWorkbuddyUAs();
+    for (const ua of uas) {
+      try {
+        const json = await req(ctx, url, {
+          'Cookie': cookieStr,
+          'x-client-platform': 'web',
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'Referer': 'https://www.workbuddy.cn/profile/plans-usage',
+          'Origin': 'https://www.workbuddy.cn',
+          'User-Agent': ua
+        }, 'POST', '{}');
+        return json?.data || json;
+      } catch (err) {
+        cookieErr = err.message;
+        console.warn(`[workbuddy] Cookie 会话（UA ${ua.match(/Chrome\/[\d.]+/)?.[0]}）失败：`, err.message);
+        // 401 才继续试下一个 UA；其它错误（网络/超时/非 JSON）直接放弃重试
+        if (!String(err.message).includes('401')) break;
+      }
     }
   } else {
     cookieErr = '浏览器未读到 workbuddy.cn 的登录 Cookie';

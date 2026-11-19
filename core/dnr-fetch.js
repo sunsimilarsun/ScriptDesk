@@ -1,5 +1,7 @@
-// 通用网络层：在后台把受限请求头（UA / Cookie / Referer / Origin 等）交给 DNR 在网络层注入。
-// 浏览器的 fetch() 禁止手动设置这些头，直接写会被静默丢弃；这里用会话级规则改写后即删。
+// 通用网络层：把真正受限的头（Cookie / Referer / Origin / Host 等）交给 DNR 网络层注入。
+// 注意：User-Agent 从 DNR_ONLY 移除——扩展上下文（service worker / 扩展页面）里 fetch 可直接
+// 设置 User-Agent（扩展特权不受浏览器 forbidden header 限制），直传比 DNR 可靠；
+// DNR 的 modifyHeaders 对 User-Agent 的修改在 Chrome 中不可靠，可能导致 UA 未生效而被 401。
 let ruleSeq = 1000;
 
 // 浏览器禁止脚本直接设置的头（forbidden headers）才必须交给 DNR 在网络层注入。
@@ -7,7 +9,7 @@ let ruleSeq = 1000;
 // 均可直接传给 fetch——直传比 DNR 会话规则可靠得多（无生效时序问题）。
 const DNR_ONLY = new Set([
   'cookie', 'cookie2', 'set-cookie',
-  'user-agent', 'referer', 'origin', 'host',
+  'referer', 'origin', 'host',
   'content-length', 'connection', 'keep-alive',
   'te', 'trailer', 'transfer-encoding', 'upgrade',
   'accept-charset', 'accept-encoding',
