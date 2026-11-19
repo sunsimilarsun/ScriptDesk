@@ -10,8 +10,9 @@ import githubHeatmap from '../widgets/github-heatmap.js';
 import market from '../widgets/market.js';
 import networkStatus from '../widgets/network-status.js';
 import subscription from '../widgets/subscription.js';
+import geminiUsage from '../widgets/gemini-usage.js';
 
-export const WIDGETS = [subinfo, telecom, aiBalance, hotlist, genericJson, countdown, rss, githubHeatmap, market, networkStatus, subscription];
+export const WIDGETS = [subinfo, telecom, aiBalance, hotlist, genericJson, countdown, rss, githubHeatmap, market, networkStatus, subscription, geminiUsage];
 
 // 按 type 建索引，后台按实例调度时用
 export const WIDGET_MAP = Object.fromEntries(WIDGETS.map((w) => [w.id, w]));

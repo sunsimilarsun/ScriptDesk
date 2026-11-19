@@ -122,6 +122,12 @@ export default {
     { key: 'colorMode', label: '涨跌配色', type: 'select', default: 'red-up', options: [
       { value: 'red-up', label: '红涨绿跌（中国习惯）' },
       { value: 'green-up', label: '绿涨红跌（国际习惯）' }
+    ] },
+    { key: 'sparkDays', label: '折线图周期', type: 'select', default: '14', options: [
+      { value: '7', label: '近 7 天' },
+      { value: '14', label: '近 14 天' },
+      { value: '30', label: '近 30 天' },
+      { value: '90', label: '近 90 天' }
     ] }
   ],
 
@@ -142,9 +148,10 @@ export default {
     );
     // 折线图：取第一个 FX 标的的近 14 天走势（若无 FX 则取第一个 CRYPTO 跳过——法币历史用 Frankfurter）
     const firstFx = symbols.find((s) => s.kind === 'FX');
+    const sparkDays = parseInt(config.sparkDays || '14', 10) || 14;
     let spark = null;
     if (firstFx) {
-      const hist = await fetchFxHistory(firstFx.symbol, 14, ctx);
+      const hist = await fetchFxHistory(firstFx.symbol, sparkDays, ctx);
       if (hist && hist.length >= 2) spark = { label: `${firstFx.symbol}`, points: hist };
     }
     return { rows, colorMode: config.colorMode || 'red-up', spark };
@@ -175,7 +182,7 @@ export default {
     </div>
     <div class="mk-list">${rows || '<div class="w-empty">无数据</div>'}</div>
     ${data.spark ? `<div class="mk-spark-wrap">
-        <div class="mk-spark-head">${esc(data.spark.label)} · 近 14 天</div>
+        <div class="mk-spark-head">${esc(data.spark.label)} · ${esc(sparkLatest(data.spark))}</div>
         ${sparkLine(data.spark.points, inst?.instanceId, redUp)}
       </div>` : ''}`;
   },
@@ -190,6 +197,13 @@ export default {
       </div>`;
   }
 };
+
+// 折线图标题右侧：取走势最后一点的实时汇率值（无数据时回退显示日期范围）
+function sparkLatest(spark) {
+  const pts = spark?.points || [];
+  if (pts.length) return formatPrice(pts[pts.length - 1].value);
+  return '—';
+}
 
 function formatPrice(v) {
   const n = num(v);

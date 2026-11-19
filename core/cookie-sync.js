@@ -74,6 +74,19 @@ export const CARRIERS = {
     loginUrl: 'https://www.workbuddy.cn/profile/plans-usage',
     ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36',
     referer: 'https://www.workbuddy.cn/'
+  },
+  // Gemini：网页端用量 gemini.google.com/usage 靠 Google 账号 Cookie（SID / __Secure-1PSID 等）鉴权。
+  // 多账号浏览器里 Google 登录态通常挂在 .google.com 下，故一并扫描 gemini.google.com 与 google.com。
+  gemini: {
+    name: 'Gemini',
+    domains: ['gemini.google.com', 'google.com'],
+    urls: [
+      'https://gemini.google.com/usage',
+      'https://gemini.google.com/'
+    ],
+    loginUrl: 'https://gemini.google.com/usage',
+    ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36',
+    referer: 'https://gemini.google.com/'
   }
 };
 

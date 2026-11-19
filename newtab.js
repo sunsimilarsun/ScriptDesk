@@ -5,7 +5,7 @@ import { buildExport, redactLayout, validateImport, exportFilename, downloadJson
 
 const $ = (id) => document.getElementById(id);
 const grid = $('grid');
-const ICONS = { subinfo: '📶', telecom: '📱', 'ai-balance': '🤖', hotlist: '🔥', 'generic-json': '🔢', countdown: '⏳', rss: '📰', 'github-heatmap': '🟩', market: '💱', 'network-status': '🌐', subscription: '🗓️' };
+const ICONS = { subinfo: '📶', telecom: '📱', 'ai-balance': '🤖', hotlist: '🔥', 'generic-json': '🔢', countdown: '⏳', rss: '📰', 'github-heatmap': '🟩', market: '💱', 'network-status': '🌐', subscription: '🗓️', 'gemini-usage': '✨' };
 const DESCS = {
   subinfo: '订阅流量与到期',
   telecom: '话费 / 流量 / 语音三环',
@@ -17,7 +17,8 @@ const DESCS = {
   'github-heatmap': 'GitHub 提交热力图与连续天数',
   market: '汇率 / 加密行情 / 指数',
   'network-status': '直连 / 代理探测',
-  subscription: 'Codex / ChatGPT 套餐限额'
+  subscription: 'Codex / ChatGPT 套餐限额',
+  'gemini-usage': 'Gemini 网页端用量 / 会员余量'
 };
 
 const state = { mode: 'view', layout: [], cache: {}, editingId: null, draggingId: null };

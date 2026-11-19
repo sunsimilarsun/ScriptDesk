@@ -99,6 +99,11 @@ chrome.runtime.onMessage.addListener((req, sender, sendResponse) => {
     refreshAll(true).then(clearBadgeIfNoSource).then(() => sendResponse({ success: true }));
     return true;
   }
+  if (req.action === 'geminiUsageSynced') {
+    // content script 同源取数完成后回传：刷新 gemini-usage 卡片读取最新缓存
+    refreshTypeOnly('gemini-usage').then(() => sendResponse({ success: true }));
+    return true;
+  }
 });
 
 // 在 service worker 里读指定域名（含其子域）的全部 Cookie，拼成 Cookie 串返回。
