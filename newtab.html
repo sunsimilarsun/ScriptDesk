@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ScriptDesk</title>
+  <link rel="stylesheet" href="newtab.css">
+</head>
+<body data-mode="view">
+  <div class="toolbar">
+    <div class="brand"><span class="dot"></span> ScriptDesk</div>
+    <div class="tools">
+      <button id="btn-add" class="add-btn" title="添加小组件">＋ 添加组件</button>
+      <button id="btn-refresh-all" title="刷新全部组件">↻ 刷新</button>
+      <button id="btn-mode" title="切换编辑模式 (E)">✎ 编辑</button>
+    </div>
+  </div>
+  <div class="edit-hint" id="edit-hint">编辑模式：拖动卡片排序 · 点击卡片编辑 · 按 Esc 或再按 E 完成</div>
+
+  <main class="bento-grid" id="grid"></main>
+
+  <!-- 实例编辑器抽屉（公共字段 + 组件私有配置） -->
+  <div class="drawer-mask" id="drawer-mask" hidden></div>
+  <aside class="drawer" id="drawer" hidden>
+    <div class="drawer-head">
+      <h2 id="drawer-title">编辑组件</h2>
+      <button id="btn-close-drawer" class="icon-btn">✕</button>
+    </div>
+    <div class="drawer-body" id="drawer-body"></div>
+    <div class="drawer-foot">
+      <button id="btn-delete-instance" class="danger">删除</button>
+      <button id="btn-save-settings" class="primary">保存</button>
+    </div>
+  </aside>
+
+  <!-- 组件库抽屉（添加新实例） -->
+  <aside class="drawer" id="library" hidden>
+    <div class="drawer-head">
+      <h2>组件库</h2>
+      <button id="btn-close-library" class="icon-btn">✕</button>
+    </div>
+    <div class="drawer-body" id="library-body"></div>
+  </aside>
+
+  <script type="module" src="newtab.js"></script>
+</body>
+</html>

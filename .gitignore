@@ -1,0 +1,15 @@
+# 临时文件
+*.tmp
+*.log
+.tmp-*
+.smoke-test.mjs
+.registry-test.mjs
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# 依赖（本项目零依赖，无 node_modules，但保留以防万一）
+node_modules/

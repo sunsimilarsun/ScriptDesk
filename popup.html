@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { width: 300px; padding: 16px; background-color: #f8fafc; color: #1e293b; }
+    .card { background: #ffffff; border-radius: 12px; padding: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .title { font-size: 14px; font-weight: 600; color: #475569; }
+    .status { font-size: 12px; color: #94a3b8; }
+
+    .metric { margin-bottom: 12px; }
+    .metric-val { font-size: 24px; font-weight: 700; color: #0f172a; }
+    .metric-val span { font-size: 14px; font-weight: 500; color: #64748b; }
+
+    .progress-bar { width: 100%; height: 8px; background: #e2e8f0; border-radius: 4px; overflow: hidden; margin-bottom: 8px; }
+    .progress-fill { height: 100%; background: #2563eb; width: 0%; transition: width 0.3s ease; }
+
+    .details { display: flex; justify-content: space-between; font-size: 12px; color: #64748b; margin-bottom: 16px; }
+
+    .open-newtab { display: block; width: 100%; margin-bottom: 12px; padding: 9px; text-align: center;
+      font-size: 12px; font-weight: 500; color: #2563eb; background: #eff6ff;
+      border: none; border-radius: 8px; }
+    .open-newtab:hover { background: #dbeafe; }
+
+    .config-sec { border-top: 1px solid #f1f5f9; padding-top: 12px; }
+    input { width: 100%; padding: 8px 10px; font-size: 12px; border: 1px solid #cbd5e1; border-radius: 6px; outline: none; margin-bottom: 8px; }
+    input:focus { border-color: #2563eb; }
+    .btn-group { display: flex; gap: 8px; }
+    button { flex: 1; padding: 8px; border: none; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; transition: background 0.2s; }
+    .btn-primary { background: #2563eb; color: #fff; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-sub { background: #e2e8f0; color: #334155; }
+    .btn-sub:hover { background: #cbd5e1; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="header">
+      <span class="title">套餐余量</span>
+      <span class="status" id="update-time">--:--</span>
+    </div>
+
+    <div class="metric">
+      <div class="metric-val" id="remain-gb">-- <span>GB 剩余</span></div>
+    </div>
+
+    <div class="progress-bar">
+      <div class="progress-fill" id="progress-fill"></div>
+    </div>
+
+    <div class="details">
+      <span>已用: <b id="used-gb">--</b> / <span id="total-gb">--</span>G</span>
+      <span>剩 <b id="days">--</b> 天</span>
+    </div>
+
+    <button class="open-newtab" id="btn-newtab">打开小组件起始页 →</button>
+
+    <div class="config-sec">
+      <input type="text" id="sub-input" placeholder="输入订阅 URL" />
+      <div class="btn-group">
+        <button class="btn-primary" id="btn-save">保存并刷新</button>
+        <button class="btn-sub" id="btn-refresh">立即刷新</button>
+      </div>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

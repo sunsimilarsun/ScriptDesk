@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "ScriptDesk 小组件起始页",
+  "version": "2.4",
+  "description": "浏览器端 Scriptable 风格小组件起始页，双模式画布 + 话费三环 + RSS/GitHub/行情/网络状态",
+  "permissions": ["storage", "alarms", "declarativeNetRequest", "cookies"],
+  "host_permissions": ["<all_urls>"],
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "查看订阅余量"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  }
+}
