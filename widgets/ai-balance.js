@@ -556,7 +556,7 @@ export default {
       { value: 'openai-admin', label: 'OpenAI Admin' },
       { value: 'anthropic-admin', label: 'Anthropic Admin' }
     ] },
-    { key: 'apiKey', label: 'API Key（仅存本机）', type: 'password', testable: true, placeholder: 'sk-... / x-api-key' },
+    { key: 'apiKey', label: 'API Key（仅存本机）', type: 'password', testable: true, platforms: ['deepseek', 'siliconflow', 'openrouter', 'newapi', 'openai-admin', 'anthropic-admin'], placeholder: 'sk-... / x-api-key' },
     { key: 'accessToken', label: '访问令牌（MoeRouter 用，nap_ 开头）', type: 'password', platforms: ['moerouter'], carrier: 'moerouter', testable: true, placeholder: 'nap_...（登录后自动捕获，或手动粘贴）' },
     { key: 'quotaPerUnit', label: '额度换算单位（quota 每单位对应美元）', type: 'number', platforms: ['moerouter'], default: 500000 },
     { key: 'exchangeRate', label: '美元兑人民币汇率', type: 'number', platforms: ['moerouter'], default: 7.3 },
