@@ -390,12 +390,12 @@ async function fetchWorkbuddyResource(config, ctx) {
     || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Safari/537.36';
 
   // 路径 1：Cookie 会话（网页端真实鉴权方式）
-  const cookie = await readWorkbuddyCookie();
+  const { cookieStr, names } = await readWorkbuddyCookie();
   let cookieErr = '';
-  if (cookie) {
+  if (cookieStr) {
     try {
       const json = await req(ctx, url, {
-        'Cookie': cookie,
+        'Cookie': cookieStr,
         'x-client-platform': 'web',
         'Content-Type': 'application/json',
         'Accept': 'application/json',
@@ -405,11 +405,11 @@ async function fetchWorkbuddyResource(config, ctx) {
       }, 'POST', '{}');
       return json?.data || json;
     } catch (err) {
-      cookieErr = err.message;
+      cookieErr = `${err.message}（已带 ${names.length} 个 Cookie：${names.slice(0, 6).join(', ')}${names.length > 6 ? '…' : ''}）`;
       console.warn('[workbuddy] Cookie 会话失败，尝试 Bearer token：', err.message);
     }
   } else {
-    cookieErr = '浏览器未读到 workbuddy.cn 登录 Cookie';
+    cookieErr = '浏览器未读到 workbuddy.cn 的登录 Cookie';
   }
 
   // 路径 2：Bearer token 兜底（桌面端 accessToken；X-Account-Uid 与 X-User-Id 双写兼容）
@@ -438,36 +438,52 @@ async function fetchWorkbuddyResource(config, ctx) {
         try { await chrome.storage.local.remove('workbuddyAuth'); } catch (_) {}
       }
       throw new Error(
-        `Cookie 与 Bearer 两种鉴权都失败。Cookie：${cookieErr || '未读取'}；Bearer：${err.message}。` +
-        '请在 Chrome 浏览器打开 https://www.workbuddy.cn/profile/plans-usage 登录一次，然后回来点「测试连接」'
+        `两种鉴权都失败。\n[1] Cookie 会话：${cookieErr || '未读取'}\n[2] Bearer token：${err.message}\n` +
+        '→ 请在 Chrome 浏览器打开 workbuddy.cn 的「套餐与积分」页并确认已登录，再回来点「测试连接」'
       );
     }
   }
 
   throw new Error(
-    `未获取 WorkBuddy 登录态（${cookieErr || '无 Cookie'}）。` +
-    '请在 Chrome 浏览器打开 https://www.workbuddy.cn/profile/plans-usage 登录一次，' +
-    '登录后浏览器会自动保存会话 Cookie，扩展即可读取积分。'
+    `未获取 WorkBuddy 登录态。\n诊断：${cookieErr || '无 Cookie'}\n` +
+    '→ 请在 Chrome 浏览器打开 https://www.workbuddy.cn/profile/plans-usage，确认右上角已显示头像（已登录），再回来点「测试连接」'
   );
 }
 
-// 读 workbuddy 域全部 Cookie（含 HttpOnly），拼成标准 Cookie 串
+// 读 workbuddy 域全部 Cookie（含 HttpOnly），返回 { cookieStr, names }
 async function readWorkbuddyCookie() {
+  const empty = { cookieStr: '', names: [] };
   try {
-    const domains = ['workbuddy.cn', '.workbuddy.cn', 'www.workbuddy.cn', 'workbuddy.ai', 'www.workbuddy.ai'];
+    // chrome.cookies.getAll({domain}) 匹配该域及其子域；去掉带前导点的写法（API 不接受）
+    const domains = ['workbuddy.cn', 'www.workbuddy.cn', 'workbuddy.ai', 'www.workbuddy.ai'];
     const all = [];
     for (const d of domains) {
-      const list = await chrome.cookies.getAll({ domain: d });
-      all.push(...list);
+      try {
+        const list = await chrome.cookies.getAll({ domain: d });
+        if (Array.isArray(list)) all.push(...list);
+      } catch (_) { /* 单个域失败继续 */ }
     }
+    // 兜底：全量拉取并过滤（避免漏掉特殊 domain 写法，如 .www.workbuddy.cn 等）
+    try {
+      const allCookies = await chrome.cookies.getAll({});
+      for (const c of allCookies) {
+        const host = String(c.domain || '').replace(/^\./, '').toLowerCase();
+        if (host === 'workbuddy.cn' || host.endsWith('.workbuddy.cn') || host === 'workbuddy.ai' || host.endsWith('.workbuddy.ai')) {
+          all.push(c);
+        }
+      }
+    } catch (_) { /* 忽略 */ }
+
     const seen = new Map();
     for (const c of all) {
       if (c.name && c.value !== undefined) seen.set(`${c.name}@${c.domain}${c.path}`, c);
     }
-    const pairs = [...seen.values()].map((c) => `${c.name}=${c.value}`);
-    return pairs.length ? pairs.join('; ') : '';
+    const cookies = [...seen.values()];
+    const names = cookies.map((c) => c.name);
+    const pairs = cookies.map((c) => `${c.name}=${c.value}`);
+    return { cookieStr: pairs.length ? pairs.join('; ') : '', names };
   } catch (_) {
-    return '';
+    return empty;
   }
 }
 
